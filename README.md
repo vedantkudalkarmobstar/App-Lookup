@@ -1,3 +1,13 @@
+---
+title: App Lookup
+emoji: 📱
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # App Lookup &bull; iOS &amp; Android Store Metadata Enricher
 
 A fast, lightweight, and unified tool to look up and enrich mobile application metadata from the **Apple App Store** and **Google Play Store**.
@@ -58,20 +68,3 @@ Open your browser at:
 | `POST` | `/lookup/quick` | JSON endpoint for live interactive search |
 | `POST` | `/lookup/batch` | Batch JSON lookup for multiple app IDs |
 | `POST` | `/lookup/excel` | Upload `.xlsx`/`.csv` file and download enriched Excel sheet |
-
----
-
-## Deployment
-
-### Deploy on Render
-1. Create a new **Web Service** on [dashboard.render.com](https://dashboard.render.com).
-2. Connect this GitHub repository.
-3. Set the following:
-   - **Runtime:** `Python 3`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn app_store_api:app --host 0.0.0.0 --port $PORT`
-4. Click **Create Web Service**.
-
-### Deploy on Vercel
-1. Import this repository on [vercel.com](https://vercel.com).
-2. Vercel will automatically use the included `vercel.json` and deploy as serverless functions.
