@@ -646,188 +646,127 @@ HTML_PAGE = """<!DOCTYPE html>
   <title>App Lookup &bull; iOS &amp; Android</title>
   <style>
     :root {
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --text-main: #0f172a;
-      --text-muted: #64748b;
-      --border: #e2e8f0;
-      --border-hover: #cbd5e1;
-      --primary: #2563eb;
-      --primary-hover: #1d4ed8;
-      --primary-subtle: #eff6ff;
-      --success: #10b981;
-      --success-subtle: #ecfdf5;
-      --ios-color: #1e293b;
-      --android-color: #047857;
-      --radius: 12px;
-      --transition: all 0.15s ease-in-out;
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --text: #111827;
+      --text-muted: #6b7280;
+      --text-subtle: #9ca3af;
+      --border: #e5e7eb;
+      --border-focus: #111827;
+      --primary: #111827;
+      --primary-hover: #1f2937;
+      --primary-active: #030712;
+      --badge-bg: #f3f4f6;
+      --badge-text: #374151;
+      --radius: 14px;
+      --radius-sm: 8px;
+      --transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg);
-      color: var(--text-main);
-      padding: 40px 20px 80px;
+      color: var(--text);
+      padding: 56px 20px 80px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
 
     .container {
-      max-width: 820px;
+      max-width: 660px;
       margin: 0 auto;
     }
 
     /* Header */
     .header {
+      margin-bottom: 24px;
       text-align: center;
-      margin-bottom: 28px;
     }
-    .badge-icon {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: #ffffff;
-      border: 1px solid var(--border);
-      padding: 6px 14px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-    }
-    .badge-icon span.dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--success);
-    }
-    h1 {
-      font-size: 26px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: var(--text-main);
-      margin-bottom: 6px;
-    }
-    .subtitle {
-      font-size: 14.5px;
-      color: var(--text-muted);
-    }
-
-    /* Main Card */
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: 0 4px 18px -4px rgba(15, 23, 42, 0.05);
-      overflow: hidden;
-    }
-
-    /* Segmented Navigation Tabs */
-    .tabs-header {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      background: #fafbfc;
-      padding: 6px;
-      gap: 6px;
-    }
-    .tab-btn {
-      flex: 1;
-      padding: 10px 16px;
-      border: 1px solid transparent;
-      background: transparent;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-muted);
-      border-radius: 8px;
-      cursor: pointer;
+    .header-logo {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      transition: var(--transition);
+      width: 44px;
+      height: 44px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
-    .tab-btn:hover {
-      color: var(--text-main);
-      background: rgba(0,0,0,0.02);
-    }
-    .tab-btn.active {
-      color: var(--text-main);
-      background: #ffffff;
-      border-color: var(--border);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-
-    /* Tab Content Panes */
-    .tab-pane {
-      display: none;
-      padding: 28px 24px;
-    }
-    .tab-pane.active {
-      display: block;
-    }
-
-    /* Platform Radio Selector */
-    .platform-selector {
-      margin-bottom: 22px;
-    }
-    .field-label {
-      font-size: 13px;
+    .header h1 {
+      font-size: 22px;
       font-weight: 600;
-      color: var(--text-main);
-      margin-bottom: 8px;
-      display: block;
+      letter-spacing: -0.025em;
+      color: var(--text);
+      margin-bottom: 4px;
     }
-    .segmented-control {
+    .header p {
+      font-size: 13.5px;
+      color: var(--text-muted);
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 8px 24px -4px rgba(0,0,0,0.04);
+      padding: 24px;
+    }
+
+    /* Mode Switcher Tabs */
+    .segmented {
       display: flex;
-      background: #f1f5f9;
+      background: #f3f4f6;
       padding: 3px;
-      border-radius: 9px;
+      border-radius: 10px;
+      margin-bottom: 22px;
       gap: 3px;
     }
-    .segmented-control label {
+    .segmented button {
       flex: 1;
-      text-align: center;
+      border: none;
+      background: transparent;
+      padding: 7px 14px;
       font-size: 13px;
       font-weight: 500;
-      padding: 7px 10px;
+      color: var(--text-muted);
       border-radius: 7px;
       cursor: pointer;
-      color: var(--text-muted);
-      user-select: none;
       transition: var(--transition);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
-    .segmented-control input {
-      display: none;
-    }
-    .segmented-control input:checked + span {
-      display: block;
-      background: #ffffff;
-      color: var(--text-main);
+    .segmented button.active {
+      background: var(--surface);
+      color: var(--text);
       font-weight: 600;
-      border-radius: 7px;
-      padding: 7px 10px;
-      margin: -7px -10px;
       box-shadow: 0 1px 2px rgba(0,0,0,0.06);
     }
 
-    /* Drag & Drop File Upload */
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* Dropzone */
     .dropzone {
-      border: 2px dashed var(--border);
-      border-radius: 10px;
-      padding: 32px 20px;
+      border: 1.5px dashed #d1d5db;
+      border-radius: 12px;
+      padding: 38px 20px;
       text-align: center;
-      background: #fafbfc;
+      background: #fafafa;
       cursor: pointer;
-      transition: var(--transition);
-      margin-bottom: 20px;
       position: relative;
+      transition: var(--transition);
+      margin-bottom: 18px;
     }
     .dropzone:hover, .dropzone.dragover {
-      border-color: var(--primary);
-      background: var(--primary-subtle);
+      border-color: #6b7280;
+      background: #f3f4f6;
     }
     .dropzone input[type="file"] {
       position: absolute;
@@ -836,251 +775,325 @@ HTML_PAGE = """<!DOCTYPE html>
       cursor: pointer;
     }
     .dropzone-icon {
-      font-size: 32px;
-      margin-bottom: 8px;
+      width: 28px;
+      height: 28px;
+      margin: 0 auto 10px;
+      color: var(--text-muted);
       display: block;
     }
-    .dropzone-text {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-main);
-      margin-bottom: 4px;
+    .dropzone-title {
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 3px;
     }
     .dropzone-hint {
-      font-size: 12.5px;
-      color: var(--text-muted);
+      font-size: 12px;
+      color: var(--text-subtle);
     }
-    .file-preview {
+
+    /* Selected File Pill */
+    .file-pill {
       display: none;
-      margin-top: 12px;
-      padding: 8px 14px;
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-main);
       align-items: center;
       justify-content: space-between;
-    }
-
-    /* Form Inputs */
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 18px;
-    }
-    @media (max-width: 600px) {
-      .form-row { grid-template-columns: 1fr; }
-    }
-    .form-group {
-      margin-bottom: 16px;
-    }
-    input[type="text"], textarea {
-      width: 100%;
-      padding: 10px 12px;
+      padding: 10px 14px;
+      background: #f9fafb;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 13.5px;
-      color: var(--text-main);
-      background: #ffffff;
-      outline: none;
-      transition: var(--transition);
+      border-radius: 9px;
+      margin-bottom: 18px;
+      font-size: 13px;
     }
-    input[type="text"]:focus, textarea:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-    }
-    textarea {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      resize: vertical;
-      min-height: 110px;
-      line-height: 1.6;
-    }
-    .form-hint {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 5px;
-    }
-
-    .checkbox-label {
-      display: inline-flex;
+    .file-pill-left {
+      display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 13px;
-      color: var(--text-main);
-      cursor: pointer;
-      margin-bottom: 22px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .checkbox-label input {
-      accent-color: var(--primary);
-      width: 16px;
-      height: 16px;
+    .file-pill-left svg {
+      flex-shrink: 0;
+      color: var(--text-muted);
+    }
+    .file-pill-name {
+      font-weight: 500;
+      color: var(--text);
+    }
+    .file-pill-size {
+      color: var(--text-subtle);
+      font-size: 12px;
+    }
+    .file-pill-remove {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .file-pill-remove:hover {
+      color: #ef4444;
+      background: #fee2e2;
     }
 
     /* Buttons */
-    .btn-primary {
+    .btn-main {
       width: 100%;
-      padding: 12px 18px;
+      padding: 11px 18px;
       background: var(--primary);
       color: #ffffff;
-      border: none;
-      border-radius: 8px;
-      font-size: 14.5px;
-      font-weight: 600;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      font-weight: 500;
       cursor: pointer;
+      transition: var(--transition);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: var(--transition);
     }
-    .btn-primary:hover {
+    .btn-main:hover {
       background: var(--primary-hover);
     }
-    .btn-primary:disabled {
+    .btn-main:disabled {
       opacity: 0.6;
       cursor: not-allowed;
     }
-    .btn-row {
-      display: flex;
-      gap: 10px;
-      margin-top: 12px;
+
+    /* Collapsible Advanced Options */
+    details.advanced {
+      margin-top: 18px;
+      border-top: 1px solid #f3f4f6;
+      padding-top: 14px;
     }
-    .btn-secondary {
-      padding: 9px 15px;
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 13px;
+    details.advanced summary {
+      font-size: 12.5px;
       font-weight: 500;
-      color: var(--text-main);
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: var(--transition);
+    }
+    details.advanced summary:hover {
+      color: var(--text);
+    }
+    .advanced-body {
+      padding-top: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      padding: 9px 11px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface);
+      outline: none;
+      transition: var(--transition);
+    }
+    input[type="text"]:focus, textarea:focus {
+      border-color: var(--border-focus);
+    }
+    .input-hint {
+      font-size: 11.5px;
+      color: var(--text-subtle);
+      margin-top: 4px;
+    }
+
+    /* Platform Radio Buttons in Advanced */
+    .radio-group {
+      display: flex;
+      gap: 8px;
+    }
+    .radio-group label {
+      flex: 1;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-align: center;
       cursor: pointer;
       transition: var(--transition);
     }
-    .btn-secondary:hover {
-      background: #f8fafc;
-      border-color: var(--border-hover);
+    .radio-group input { display: none; }
+    .radio-group label:has(input:checked) {
+      border-color: var(--primary);
+      background: #f9fafb;
+      color: var(--text);
+      font-weight: 600;
     }
 
-    /* Live Results Table */
-    .results-section {
-      margin-top: 26px;
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      margin-top: 2px;
+    }
+    .checkbox-row input { accent-color: var(--primary); }
+
+    /* Instant Search View */
+    textarea {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      resize: vertical;
+      min-height: 105px;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+    .sample-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: var(--text-subtle);
+    }
+    .sample-chip {
+      background: #f3f4f6;
+      border: 1px solid transparent;
+      padding: 3px 8px;
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .sample-chip:hover {
+      background: #e5e7eb;
+      color: var(--text);
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-ghost {
+      padding: 9px 14px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .btn-ghost:hover {
+      background: #f9fafb;
+      color: var(--text);
+    }
+
+    /* Results Table */
+    .results-card {
+      margin-top: 20px;
       border-top: 1px solid var(--border);
-      padding-top: 22px;
+      padding-top: 18px;
       display: none;
     }
-    .results-header {
+    .results-topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
-    }
-    .results-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: var(--text-main);
-    }
-    .results-summary {
+      margin-bottom: 12px;
       font-size: 12.5px;
       color: var(--text-muted);
     }
-    .table-wrapper {
+    .table-box {
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow-x: auto;
-      max-height: 440px;
+      max-height: 380px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: 12.5px;
       text-align: left;
     }
     th {
-      background: #f8fafc;
-      padding: 10px 12px;
-      font-size: 12px;
-      font-weight: 600;
+      background: #fafafa;
+      padding: 8px 12px;
+      font-weight: 500;
       color: var(--text-muted);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
+      white-space: nowrap;
     }
     td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border);
+      padding: 9px 12px;
+      border-bottom: 1px solid #f3f4f6;
       vertical-align: middle;
+      white-space: nowrap;
     }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #fafbfc; }
-
-    /* Badges */
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 8px;
-      border-radius: 6px;
+    tr:hover td { background: #fafafa; }
+    .badge-plat {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
       font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
+      font-weight: 500;
+      background: #f3f4f6;
+      color: #374151;
     }
-    .badge-ios {
-      background: #f1f5f9;
-      color: var(--ios-color);
-      border: 1px solid #cbd5e1;
-    }
-    .badge-android {
-      background: #ecfdf5;
-      color: var(--android-color);
-      border: 1px solid #a7f3d0;
-    }
-    .badge-found {
-      background: #f0fdf4;
-      color: #15803d;
-    }
-    .badge-missing {
-      background: #f8fafc;
-      color: #94a3b8;
-    }
-    .link-store {
-      color: var(--primary);
+    .store-link {
+      color: #2563eb;
       text-decoration: none;
       font-weight: 500;
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
     }
-    .link-store:hover { text-decoration: underline; }
+    .store-link:hover { text-decoration: underline; }
 
-    /* Loading Spinner */
+    /* Spinner */
     .spinner {
       border: 2px solid rgba(255,255,255,0.3);
       border-radius: 50%;
       border-top: 2px solid #ffffff;
-      width: 16px;
-      height: 16px;
-      animation: spin 0.7s linear infinite;
+      width: 14px;
+      height: 14px;
+      animation: spin 0.6s linear infinite;
       display: inline-block;
     }
     @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+      to { transform: rotate(360deg); }
     }
 
     /* Footer */
     .footer {
       text-align: center;
-      margin-top: 24px;
-      font-size: 12.5px;
-      color: var(--text-muted);
+      margin-top: 28px;
+      font-size: 12px;
+      color: var(--text-subtle);
     }
     .footer a {
-      color: var(--primary);
+      color: var(--text-muted);
       text-decoration: none;
     }
-    .footer a:hover { text-decoration: underline; }
+    .footer a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -1088,143 +1101,141 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="container">
   <!-- Header -->
   <div class="header">
-    <div class="badge-icon">
-      <span class="dot"></span>
-      Apple App Store &amp; Google Play Store
+    <div class="header-logo">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <rect x="5" y="2" width="14" height="20" rx="3"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18" stroke-width="2.5"></line>
+      </svg>
     </div>
-    <h1>Mobile App Store Lookup</h1>
-    <p class="subtitle">Quickly look up metadata or bulk enrich Excel spreadsheets for iOS and Android apps.</p>
+    <h1>App Lookup</h1>
+    <p>Enrich iOS App Store &amp; Google Play metadata in bulk or individually.</p>
   </div>
 
-  <!-- Main Card -->
+  <!-- Card -->
   <div class="card">
-    <!-- Segmented Tab Header -->
-    <div class="tabs-header">
-      <button type="button" class="tab-btn active" id="tab-btn-file" onclick="switchTab('file')">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-        Batch Excel / CSV Enricher
+    <!-- Mode Switcher -->
+    <div class="segmented">
+      <button type="button" class="active" id="tab-btn-file" onclick="setMode('file')">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+        Spreadsheet Enricher
       </button>
-      <button type="button" class="tab-btn" id="tab-btn-quick" onclick="switchTab('quick')">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        Quick Search &amp; Preview
+      <button type="button" id="tab-btn-quick" onclick="setMode('quick')">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        Instant Search
       </button>
     </div>
 
-    <!-- PANE 1: Excel / CSV Batch Enricher -->
+    <!-- PANE 1: SPREADSHEET ENRICHER -->
     <div class="tab-pane active" id="pane-file">
-      <form action="/lookup/excel" method="post" enctype="multipart/form-data" id="excel-form" onsubmit="handleExcelSubmit(event)">
-        <!-- Platform Selection -->
-        <div class="platform-selector">
-          <label class="field-label">Target Platform</label>
-          <div class="segmented-control">
-            <label>
-              <input type="radio" name="platform" value="auto" checked>
-              <span>⚡ Auto-Detect (Both)</span>
-            </label>
-            <label>
-              <input type="radio" name="platform" value="ios">
-              <span>🍎 Apple iOS</span>
-            </label>
-            <label>
-              <input type="radio" name="platform" value="android">
-              <span>🤖 Google Android</span>
-            </label>
+      <form action="/lookup/excel" method="post" enctype="multipart/form-data" id="excel-form" onsubmit="handleFormSubmit(event)">
+        <!-- Dropzone -->
+        <div class="dropzone" id="dropzone">
+          <input type="file" name="file" id="file-input" accept=".xlsx,.xls,.csv" required onchange="handleFile(this)">
+          <svg class="dropzone-icon" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <div class="dropzone-title" id="dropzone-title">Drop your Excel (.xlsx) or CSV here</div>
+          <div class="dropzone-hint">or click to browse from your device</div>
+        </div>
+
+        <!-- Selected File Pill -->
+        <div class="file-pill" id="file-pill">
+          <div class="file-pill-left">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            <span class="file-pill-name" id="pill-name">file.xlsx</span>
+            <span class="file-pill-size" id="pill-size">0 KB</span>
           </div>
+          <button type="button" class="file-pill-remove" onclick="removeFile()" title="Remove file">&times;</button>
         </div>
 
-        <!-- File Upload Dropzone -->
-        <div class="dropzone" id="file-dropzone">
-          <input type="file" name="file" id="file-input" accept=".xlsx,.xls,.csv" required onchange="handleFileSelected(this)">
-          <span class="dropzone-icon">📁</span>
-          <div class="dropzone-text" id="dropzone-label">Click to browse or drop your spreadsheet here</div>
-          <div class="dropzone-hint">Supports Excel (.xlsx, .xls) and CSV (.csv) files</div>
-        </div>
-        <div class="file-preview" id="file-preview-pill">
-          <span id="file-name-text">filename.xlsx</span>
-          <button type="button" class="btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="clearFile()">Remove</button>
-        </div>
-
-        <!-- Settings Row -->
-        <div class="form-row">
-          <div class="form-group">
-            <label class="field-label">Storefront Countries (priority order)</label>
-            <input type="text" name="countries" value="in,tw,us,gb">
-            <div class="form-hint">Comma-separated ISO codes (e.g. in,tw,us,gb,jp)</div>
-          </div>
-          <div class="form-group">
-            <label class="field-label">ID Column Header (optional)</label>
-            <input type="text" name="column_name" placeholder="Auto-detects if left blank">
-            <div class="form-hint">Leaves auto-detection enabled when blank</div>
-          </div>
-        </div>
-
-        <label class="checkbox-label">
-          <input type="checkbox" name="scrape_fallback" value="true" checked>
-          Enable web page scraping fallback for unlisted / country-specific apps
-        </label>
-
-        <button type="submit" class="btn-primary" id="btn-submit-excel">
-          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          <span id="btn-submit-text">Enrich Spreadsheet &amp; Download Excel</span>
+        <!-- Primary Action Button -->
+        <button type="submit" class="btn-main" id="btn-submit-file">
+          <span id="btn-submit-label">Enrich &amp; Download Excel &darr;</span>
         </button>
+
+        <!-- Collapsible Advanced Settings -->
+        <details class="advanced">
+          <summary>Advanced settings</summary>
+          <div class="advanced-body">
+            <div class="form-group">
+              <label>Target Platform</label>
+              <div class="radio-group">
+                <label><input type="radio" name="platform" value="auto" checked> Auto-Detect</label>
+                <label><input type="radio" name="platform" value="ios"> iOS Only</label>
+                <label><input type="radio" name="platform" value="android"> Android Only</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Storefront Countries (priority order)</label>
+              <input type="text" name="countries" value="in,tw,us,gb">
+              <div class="input-hint">Searches in this country order for region-locked apps.</div>
+            </div>
+            <div class="form-group">
+              <label>ID Column Header (optional)</label>
+              <input type="text" name="column_name" placeholder="Auto-detected if blank">
+            </div>
+            <label class="checkbox-row">
+              <input type="checkbox" name="scrape_fallback" value="true" checked>
+              Enable deep web page scraping fallback
+            </label>
+          </div>
+        </details>
       </form>
     </div>
 
-    <!-- PANE 2: Quick Search & Preview -->
+    <!-- PANE 2: INSTANT SEARCH -->
     <div class="tab-pane" id="pane-quick">
-      <!-- Platform Selection -->
-      <div class="platform-selector">
-        <label class="field-label">Target Platform</label>
-        <div class="segmented-control">
-          <label>
-            <input type="radio" name="quick_platform" value="auto" checked>
-            <span>⚡ Auto-Detect (Both)</span>
-          </label>
-          <label>
-            <input type="radio" name="quick_platform" value="ios">
-            <span>🍎 Apple iOS</span>
-          </label>
-          <label>
-            <input type="radio" name="quick_platform" value="android">
-            <span>🤖 Google Android</span>
-          </label>
-        </div>
+      <textarea id="quick-input" placeholder="Paste App IDs, package names, or store URLs (one per line)..."></textarea>
+
+      <!-- Sample Chips -->
+      <div class="sample-row">
+        <span>Try:</span>
+        <button type="button" class="sample-chip" onclick="addSample('com.whatsapp')">+ WhatsApp (Android)</button>
+        <button type="button" class="sample-chip" onclick="addSample('310633997')">+ WhatsApp (iOS)</button>
+        <button type="button" class="sample-chip" onclick="addSample('org.mozilla.firefox')">+ Firefox</button>
+        <button type="button" class="sample-chip" onclick="addSample('com.spotify.music')">+ Spotify</button>
       </div>
 
-      <div class="form-group">
-        <label class="field-label">App IDs, Package Names, or Store URLs (one per line)</label>
-        <textarea id="quick-inputs" rows="5" placeholder="e.g.&#10;com.whatsapp&#10;https://apps.apple.com/in/app/whatsapp-messenger/id310633997&#10;org.mozilla.firefox&#10;1617391485"></textarea>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group" style="margin-bottom:0;">
-          <label class="field-label">Storefront Countries</label>
-          <input type="text" id="quick-countries" value="in,tw,us,gb">
-        </div>
-        <div class="form-group" style="margin-bottom:0;display:flex;align-items:flex-end;">
-          <label class="checkbox-label" style="margin-bottom:8px;">
-            <input type="checkbox" id="quick-scrape-fallback" checked>
-            Enable scrape fallback
-          </label>
-        </div>
-      </div>
-
-      <div class="btn-row">
-        <button type="button" class="btn-primary" style="flex:2;" id="btn-quick-run" onclick="runQuickLookup()">
-          <span id="quick-btn-text">Lookup Apps</span>
+      <div class="quick-actions">
+        <button type="button" class="btn-main" style="flex: 2;" id="btn-quick-run" onclick="runSearch()">
+          <span id="quick-label">Look Up Apps</span>
         </button>
-        <button type="button" class="btn-secondary" onclick="loadSampleData()">Load Samples</button>
-        <button type="button" class="btn-secondary" onclick="clearQuick()">Clear</button>
+        <button type="button" class="btn-ghost" onclick="clearSearch()">Clear</button>
       </div>
 
-      <!-- Live Results Table -->
-      <div class="results-section" id="results-area">
-        <div class="results-header">
-          <div class="results-title">Lookup Results</div>
-          <div class="results-summary" id="results-stats">Total: 0 | Resolved: 0</div>
+      <!-- Collapsible Advanced Settings for Search -->
+      <details class="advanced">
+        <summary>Advanced settings</summary>
+        <div class="advanced-body">
+          <div class="form-group">
+            <label>Target Platform</label>
+            <div class="radio-group">
+              <label><input type="radio" name="quick_platform" value="auto" checked> Auto-Detect</label>
+              <label><input type="radio" name="quick_platform" value="ios"> iOS Only</label>
+              <label><input type="radio" name="quick_platform" value="android"> Android Only</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Storefront Countries</label>
+            <input type="text" id="quick-countries" value="in,tw,us,gb">
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="quick-fallback" checked>
+            Enable deep web page scraping fallback
+          </label>
         </div>
-        <div class="table-wrapper">
-          <table id="results-table">
+      </details>
+
+      <!-- Results Table -->
+      <div class="results-card" id="results-card">
+        <div class="results-topbar">
+          <span id="results-count">Results</span>
+          <button type="button" class="btn-ghost" style="padding: 3px 8px; font-size: 11.5px;" onclick="copyTableAsCsv()">Copy CSV</button>
+        </div>
+        <div class="table-box">
+          <table>
             <thead>
               <tr>
                 <th>Platform</th>
@@ -1232,12 +1243,10 @@ HTML_PAGE = """<!DOCTYPE html>
                 <th>ID / Package</th>
                 <th>Developer</th>
                 <th>Category</th>
-                <th>Country</th>
-                <th>Store Link</th>
+                <th>Store</th>
               </tr>
             </thead>
-            <tbody id="results-tbody">
-            </tbody>
+            <tbody id="results-tbody"></tbody>
           </table>
         </div>
       </div>
@@ -1246,81 +1255,87 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <!-- Footer -->
   <div class="footer">
-    iOS App Store &amp; Google Play Store Enriched &bull; <a href="/docs" target="_blank">Interactive Swagger API Docs (/docs)</a>
+    App Lookup &bull; <a href="/docs" target="_blank">Swagger API (/docs)</a>
   </div>
 </div>
 
 <script>
-  function switchTab(tab) {
-    document.getElementById('pane-file').classList.toggle('active', tab === 'file');
-    document.getElementById('pane-quick').classList.toggle('active', tab === 'quick');
-    document.getElementById('tab-btn-file').classList.toggle('active', tab === 'file');
-    document.getElementById('tab-btn-quick').classList.toggle('active', tab === 'quick');
+  let lastResults = [];
+
+  function setMode(mode) {
+    document.getElementById('pane-file').classList.toggle('active', mode === 'file');
+    document.getElementById('pane-quick').classList.toggle('active', mode === 'quick');
+    document.getElementById('tab-btn-file').classList.toggle('active', mode === 'file');
+    document.getElementById('tab-btn-quick').classList.toggle('active', mode === 'quick');
   }
 
-  // File Dropzone Handling
-  function handleFileSelected(input) {
+  // File Handling
+  function handleFile(input) {
     if (input.files && input.files[0]) {
       const file = input.files[0];
-      document.getElementById('file-name-text').textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-      document.getElementById('file-preview-pill').style.display = 'flex';
-      document.getElementById('dropzone-label').textContent = 'Selected: ' + file.name;
+      document.getElementById('pill-name').textContent = file.name;
+      document.getElementById('pill-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
+      document.getElementById('file-pill').style.display = 'flex';
+      document.getElementById('dropzone').style.display = 'none';
     }
   }
 
-  function clearFile() {
+  function removeFile() {
     const input = document.getElementById('file-input');
     input.value = '';
-    document.getElementById('file-preview-pill').style.display = 'none';
-    document.getElementById('dropzone-label').textContent = 'Click to browse or drop your spreadsheet here';
+    document.getElementById('file-pill').style.display = 'none';
+    document.getElementById('dropzone').style.display = 'block';
   }
 
-  function handleExcelSubmit(e) {
-    const btn = document.getElementById('btn-submit-excel');
-    const txt = document.getElementById('btn-submit-text');
+  function handleFormSubmit(e) {
+    const btn = document.getElementById('btn-submit-file');
+    const label = document.getElementById('btn-submit-label');
     btn.disabled = true;
-    txt.innerHTML = '<span class="spinner"></span> Processing &amp; Downloading...';
+    label.innerHTML = '<span class="spinner"></span> Processing &amp; Downloading...';
     setTimeout(() => {
       btn.disabled = false;
-      txt.textContent = 'Enrich Spreadsheet & Download Excel';
-    }, 8000);
+      label.innerHTML = 'Enrich &amp; Download Excel &darr;';
+    }, 6000);
   }
 
-  // Quick Interactive Search
-  function loadSampleData() {
-    document.getElementById('quick-inputs').value = 
-      "com.whatsapp\\n" +
-      "https://apps.apple.com/us/app/whatsapp-messenger/id310633997\\n" +
-      "org.mozilla.firefox\\n" +
-      "1617391485";
+  // Search Handling
+  function addSample(sample) {
+    const ta = document.getElementById('quick-input');
+    const cur = ta.value.trim();
+    if (cur) {
+      ta.value = cur + '\\n' + sample;
+    } else {
+      ta.value = sample;
+    }
   }
 
-  function clearQuick() {
-    document.getElementById('quick-inputs').value = '';
-    document.getElementById('results-area').style.display = 'none';
+  function clearSearch() {
+    document.getElementById('quick-input').value = '';
+    document.getElementById('results-card').style.display = 'none';
     document.getElementById('results-tbody').innerHTML = '';
+    lastResults = [];
   }
 
-  async function runQuickLookup() {
-    const rawText = document.getElementById('quick-inputs').value.trim();
-    if (!rawText) {
-      alert("Please enter at least one App ID, package name, or store URL.");
+  async function runSearch() {
+    const raw = document.getElementById('quick-input').value.trim();
+    if (!raw) {
+      alert("Please enter at least one App ID or package name.");
       return;
     }
-    const lines = rawText.split("\\n").map(l => l.trim()).filter(Boolean);
+    const lines = raw.split('\\n').map(s => s.trim()).filter(Boolean);
     const platform = document.querySelector('input[name="quick_platform"]:checked').value;
-    const countries = document.getElementById('quick-countries').value.trim() || "in,tw,us,gb";
-    const fallback = document.getElementById('quick-scrape-fallback').checked;
+    const countries = document.getElementById('quick-countries').value.trim() || 'in,tw,us,gb';
+    const fallback = document.getElementById('quick-fallback').checked;
 
     const btn = document.getElementById('btn-quick-run');
-    const txt = document.getElementById('quick-btn-text');
+    const label = document.getElementById('quick-label');
     btn.disabled = true;
-    txt.innerHTML = '<span class="spinner"></span> Looking up...';
+    label.innerHTML = '<span class="spinner"></span> Looking up...';
 
     try {
-      const resp = await fetch("/lookup/quick", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const resp = await fetch('/lookup/quick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           inputs: lines,
           platform: platform,
@@ -1329,65 +1344,66 @@ HTML_PAGE = """<!DOCTYPE html>
         })
       });
 
-      if (!resp.ok) {
-        throw new Error("Server returned status " + resp.status);
-      }
+      if (!resp.ok) throw new Error('Request failed with status ' + resp.status);
 
       const data = await resp.json();
-      renderResults(data);
+      lastResults = data.results || [];
+      renderTable(data);
     } catch (err) {
-      alert("Error resolving apps: " + err.message);
+      alert('Error fetching metadata: ' + err.message);
     } finally {
       btn.disabled = false;
-      txt.textContent = 'Lookup Apps';
+      label.textContent = 'Look Up Apps';
     }
   }
 
-  function renderResults(data) {
-    const area = document.getElementById('results-area');
+  function renderTable(data) {
+    const card = document.getElementById('results-card');
     const tbody = document.getElementById('results-tbody');
-    const stats = document.getElementById('results-stats');
+    const count = document.getElementById('results-count');
 
-    stats.textContent = `Total: ${data.total} | Found: ${data.resolved}`;
+    count.textContent = `Found ${data.resolved} of ${data.total} apps`;
     tbody.innerHTML = '';
 
     (data.results || []).forEach(r => {
       const tr = document.createElement('tr');
-
-      const platBadge = r.platform === 'iOS' 
-        ? '<span class="badge badge-ios">🍎 iOS</span>' 
-        : r.platform === 'Android' 
-        ? '<span class="badge badge-android">🤖 Android</span>' 
-        : '<span class="badge badge-missing">Unknown</span>';
-
-      const statusBadge = r.found 
-        ? '<span class="badge badge-found">' + escapeHtml(r.app_name) + '</span>'
-        : '<span class="badge badge-missing">Not Found</span>';
-
-      const storeLink = r.store_url 
-        ? `<a href="${escapeHtml(r.store_url)}" target="_blank" class="link-store">View Store &#8599;</a>`
-        : '-';
+      const plat = r.platform === 'iOS' ? 'iOS' : r.platform === 'Android' ? 'Android' : '-';
+      const link = r.store_url ? `<a href="${esc(r.store_url)}" target="_blank" class="store-link">Open &nearr;</a>` : '-';
 
       tr.innerHTML = `
-        <td>${platBadge}</td>
-        <td><strong>${escapeHtml(r.app_name)}</strong></td>
-        <td><code>${escapeHtml(r.app_id || r.input)}</code></td>
-        <td>${escapeHtml(r.developer || '-')}</td>
-        <td>${escapeHtml(r.category || '-')}</td>
-        <td>${escapeHtml(r.storefront || '-')}</td>
-        <td>${storeLink}</td>
+        <td><span class="badge-plat">${plat}</span></td>
+        <td><strong>${esc(r.app_name)}</strong></td>
+        <td><code>${esc(r.app_id || r.input)}</code></td>
+        <td>${esc(r.developer || '-')}</td>
+        <td>${esc(r.category || '-')}</td>
+        <td>${link}</td>
       `;
       tbody.appendChild(tr);
     });
 
-    area.style.display = 'block';
+    card.style.display = 'block';
   }
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, function(m) {
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+  function copyTableAsCsv() {
+    if (!lastResults.length) return;
+    const headers = ['Platform', 'App Name', 'ID', 'Developer', 'Category', 'Store URL'];
+    const rows = lastResults.map(r => [
+      `"${r.platform || ''}"`,
+      `"${(r.app_name || '').replace(/"/g, '""')}"`,
+      `"${r.app_id || r.input || ''}"`,
+      `"${(r.developer || '').replace(/"/g, '""')}"`,
+      `"${r.category || ''}"`,
+      `"${r.store_url || ''}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\\n');
+    navigator.clipboard.writeText(csvContent).then(() => {
+      alert('Copied CSV to clipboard!');
     });
+  }
+
+  function esc(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
 </script>
 
@@ -1403,3 +1419,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app_store_api:app", host="127.0.0.1", port=8080, reload=True)
+
