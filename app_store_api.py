@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Mobile App Store & Play Store Lookup API", version="2.0.0")
+app = FastAPI(title="Mobile App Store & Play Store Lookup API", version="3.0.0")
 
 HEADERS = {
     "User-Agent": (
@@ -37,7 +37,7 @@ class QuickRequest(BaseModel):
 
 
 # ============================================================================
-# Identifier Extractors
+# Identifier Extractors & Helpers
 # ============================================================================
 
 
@@ -153,14 +153,14 @@ def clean_android_title(title: str) -> str:
 
 
 # ============================================================================
-# iOS Store Resolvers
+# iOS Store Resolvers (Rich Metadata)
 # ============================================================================
 
 
 async def lookup_itunes_batch(
     client: httpx.AsyncClient, app_ids: List[str], country: str
 ) -> Dict[str, dict]:
-    """Query Apple iTunes Lookup API in batches of 100."""
+    """Query Apple iTunes Lookup API in batches of 100 with rich metadata."""
     found: Dict[str, dict] = {}
     batch_size = 100
 
@@ -180,15 +180,25 @@ async def lookup_itunes_batch(
                     for item in data.get("results", []):
                         app_id = str(item.get("trackId", ""))
                         if app_id:
+                            rating = item.get("averageUserRating")
                             found[app_id] = {
                                 "platform": "iOS",
                                 "app_name": item.get("trackName", ""),
                                 "bundle_id": item.get("bundleId", ""),
                                 "developer": item.get("artistName", ""),
+                                "developer_id": str(item.get("artistId", "")),
                                 "category": item.get("primaryGenreName", ""),
+                                "icon_url": item.get("artworkUrl512") or item.get("artworkUrl100") or "",
+                                "rating": round(float(rating), 2) if rating is not None else None,
+                                "reviews_count": item.get("userRatingCount") or 0,
+                                "price": item.get("formattedPrice") or "Free",
+                                "version": item.get("version", ""),
+                                "content_rating": item.get("contentAdvisoryRating", ""),
+                                "min_os": f"iOS {item.get('minimumOsVersion')}+" if item.get("minimumOsVersion") else "",
                                 "store_url": item.get("trackViewUrl", ""),
                                 "storefront": country.upper(),
                                 "source": "itunes_api",
+                                "status": "Live",
                             }
                 break
             except Exception:
@@ -205,7 +215,7 @@ async def scrape_app_store_page(
     app_id: str,
     country: str,
 ) -> Optional[dict]:
-    """Fetch apps.apple.com/{country}/app/id{app_id} and extract metadata."""
+    """Fetch apps.apple.com/{country}/app/id{app_id} fallback with rich metadata."""
     url = f"https://apps.apple.com/{country.lower()}/app/id{app_id}"
     async with sem:
         try:
@@ -217,6 +227,10 @@ async def scrape_app_store_page(
             app_name = ""
             developer = ""
             category = ""
+            icon_url = ""
+            rating = None
+            reviews_count = 0
+            price = "Free"
 
             # 1. SoftwareApplication JSON-LD
             for script in soup.find_all("script", type="application/ld+json"):
@@ -230,6 +244,17 @@ async def scrape_app_store_page(
                         elif isinstance(author, str):
                             developer = author or developer
                         category = ld.get("applicationCategory", "") or category
+                        icon_url = ld.get("image", "") or icon_url
+                        agg_rating = ld.get("aggregateRating", {})
+                        if agg_rating and isinstance(agg_rating, dict):
+                            val = agg_rating.get("ratingValue")
+                            rating = round(float(val), 2) if val is not None else None
+                            reviews_count = int(agg_rating.get("reviewCount") or 0)
+                        offers = ld.get("offers", {})
+                        if isinstance(offers, dict):
+                            p = offers.get("price")
+                            if p is not None:
+                                price = "Free" if str(p) == "0" else f"${p}"
                         break
                 except Exception:
                     continue
@@ -239,6 +264,11 @@ async def scrape_app_store_page(
                 og = soup.find("meta", property="og:title")
                 if og and og.get("content"):
                     app_name = og["content"]
+
+            if not icon_url:
+                og_img = soup.find("meta", property="og:image")
+                if og_img and og_img.get("content"):
+                    icon_url = og_img["content"]
 
             if not app_name and soup.title and soup.title.string:
                 app_name = soup.title.string
@@ -252,10 +282,19 @@ async def scrape_app_store_page(
                 "app_name": app_name,
                 "bundle_id": "",
                 "developer": developer,
+                "developer_id": "",
                 "category": category,
+                "icon_url": icon_url,
+                "rating": rating,
+                "reviews_count": reviews_count,
+                "price": price,
+                "version": "",
+                "content_rating": "",
+                "min_os": "",
                 "store_url": str(resp.url),
                 "storefront": country.upper(),
                 "source": "app_store_page",
+                "status": "Live",
             }
         except Exception:
             return None
@@ -273,17 +312,21 @@ async def resolve_ios_ids(
 
     async with httpx.AsyncClient() as client:
         # Step 1: Fast iTunes batch query
-        for country in clean_countries:
+        for idx, country in enumerate(clean_countries):
             missing = [aid for aid in unique_ids if aid not in results]
             if not missing:
                 break
             batch_hits = await lookup_itunes_batch(client, missing, country)
+            # Flag region restriction if found in fallback country
+            for k, v in batch_hits.items():
+                if idx > 0 and v.get("status") == "Live":
+                    v["status"] = "Region-Restricted"
             results.update(batch_hits)
 
         # Step 2: Web page scraping fallback
         if scrape_fallback:
             sem = asyncio.Semaphore(5)
-            for country in clean_countries:
+            for idx, country in enumerate(clean_countries):
                 missing = [aid for aid in unique_ids if aid not in results]
                 if not missing:
                     break
@@ -291,13 +334,15 @@ async def resolve_ios_ids(
                 scraped = await asyncio.gather(*tasks)
                 for aid, info in zip(missing, scraped):
                     if info:
+                        if idx > 0 and info.get("status") == "Live":
+                            info["status"] = "Region-Restricted"
                         results[aid] = info
 
     return results
 
 
 # ============================================================================
-# Android Store Resolvers
+# Android Store Resolvers (Rich Metadata)
 # ============================================================================
 
 
@@ -307,7 +352,7 @@ async def scrape_google_play_page(
     package_name: str,
     country: str,
 ) -> Optional[dict]:
-    """Fetch Google Play Store page and extract app metadata."""
+    """Fetch Google Play Store page and extract rich app metadata."""
     url = "https://play.google.com/store/apps/details"
     params = {"id": package_name, "gl": country.lower(), "hl": "en"}
 
@@ -320,7 +365,13 @@ async def scrape_google_play_page(
             soup = BeautifulSoup(resp.text, "html.parser")
             app_name = ""
             developer = ""
+            developer_id = ""
             category = ""
+            icon_url = ""
+            rating = None
+            reviews_count = 0
+            price = "Free"
+            content_rating = ""
 
             # 1. SoftwareApplication JSON-LD
             for script in soup.find_all("script", type="application/ld+json"):
@@ -331,9 +382,27 @@ async def scrape_google_play_page(
                         author = ld.get("author", {})
                         if isinstance(author, dict):
                             developer = author.get("name", "") or developer
+                            developer_id = author.get("url", "").split("=")[-1] if "url" in author else ""
                         elif isinstance(author, str):
                             developer = author or developer
                         category = ld.get("applicationCategory", "") or category
+                        icon_url = ld.get("image", "") or icon_url
+
+                        agg = ld.get("aggregateRating", {})
+                        if agg and isinstance(agg, dict):
+                            val = agg.get("ratingValue")
+                            rating = round(float(val), 2) if val is not None else None
+                            reviews_count = int(agg.get("ratingCount") or agg.get("reviewCount") or 0)
+
+                        offers = ld.get("offers", [])
+                        if isinstance(offers, list) and offers:
+                            p = offers[0].get("price")
+                            price = "Free" if str(p) in {"0", "0.0", "0.00"} else f"${p}"
+                        elif isinstance(offers, dict):
+                            p = offers.get("price")
+                            price = "Free" if str(p) in {"0", "0.0", "0.00"} else f"${p}"
+
+                        content_rating = ld.get("contentRating", "") or content_rating
                         break
                 except Exception:
                     continue
@@ -344,10 +413,10 @@ async def scrape_google_play_page(
                 if h1:
                     app_name = h1.get_text(strip=True)
 
-            if not app_name:
-                og = soup.find("meta", property="og:title")
-                if og and og.get("content"):
-                    app_name = og["content"]
+            if not icon_url:
+                og_img = soup.find("meta", property="og:image")
+                if og_img and og_img.get("content"):
+                    icon_url = og_img["content"]
 
             if not app_name and soup.title and soup.title.string:
                 app_name = soup.title.string
@@ -361,10 +430,19 @@ async def scrape_google_play_page(
                 "app_name": app_name,
                 "bundle_id": package_name,
                 "developer": developer,
+                "developer_id": developer_id,
                 "category": category,
+                "icon_url": icon_url,
+                "rating": rating,
+                "reviews_count": reviews_count,
+                "price": price,
+                "version": "",
+                "content_rating": content_rating,
+                "min_os": "Android",
                 "store_url": f"https://play.google.com/store/apps/details?id={package_name}",
                 "storefront": country.upper(),
                 "source": "google_play_store",
+                "status": "Live",
             }
         except Exception:
             return None
@@ -382,7 +460,7 @@ async def resolve_android_packages(
 
     async with httpx.AsyncClient() as client:
         sem = asyncio.Semaphore(5)
-        for country in clean_countries:
+        for idx, country in enumerate(clean_countries):
             missing = [pkg for pkg in unique_pkgs if pkg not in results]
             if not missing:
                 break
@@ -390,9 +468,148 @@ async def resolve_android_packages(
             scraped = await asyncio.gather(*tasks)
             for pkg, info in zip(missing, scraped):
                 if info:
+                    if idx > 0 and info.get("status") == "Live":
+                        info["status"] = "Region-Restricted"
                     results[pkg] = info
 
     return results
+
+
+# ============================================================================
+# Reverse Keyword Search & Developer Portfolio
+# ============================================================================
+
+
+async def search_apple_apps(query: str, country: str = "us", limit: int = 4) -> List[dict]:
+    """Search Apple iTunes for apps by keyword/name."""
+    url = "https://itunes.apple.com/search"
+    params = {"term": query, "entity": "software", "limit": limit, "country": country.lower()}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=10.0)
+            if resp.status_code != 200:
+                return []
+            items = []
+            for x in resp.json().get("results", []):
+                rating = x.get("averageUserRating")
+                items.append({
+                    "platform": "iOS",
+                    "app_id": str(x.get("trackId")),
+                    "app_name": x.get("trackName", ""),
+                    "developer": x.get("artistName", ""),
+                    "developer_id": str(x.get("artistId", "")),
+                    "category": x.get("primaryGenreName", ""),
+                    "icon_url": x.get("artworkUrl100") or x.get("artworkUrl60") or "",
+                    "rating": round(float(rating), 1) if rating is not None else None,
+                    "reviews_count": x.get("userRatingCount") or 0,
+                    "price": x.get("formattedPrice") or "Free",
+                    "store_url": x.get("trackViewUrl", ""),
+                })
+            return items
+    except Exception:
+        return []
+
+
+async def search_google_apps(query: str, country: str = "us", limit: int = 4) -> List[dict]:
+    """Search Google Play for apps by keyword/name."""
+    url = f"https://play.google.com/store/search?q={query}&c=apps&hl=en&gl={country.lower()}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=HEADERS, timeout=10.0)
+            if resp.status_code != 200:
+                return []
+            soup = BeautifulSoup(resp.text, "html.parser")
+            hits = []
+            for a in soup.find_all("a", href=re.compile(r"/store/apps/details\?id=")):
+                href = a.get("href", "")
+                m = re.search(r"id=([a-zA-Z0-9_\.]+)", href)
+                if m:
+                    pkg = m.group(1)
+                    if pkg not in [h["app_id"] for h in hits]:
+                        name = a.get_text(strip=True)
+                        img = a.find("img")
+                        icon = img["src"] if img and "src" in img.attrs else ""
+                        hits.append({
+                            "platform": "Android",
+                            "app_id": pkg,
+                            "app_name": clean_android_title(name) or pkg,
+                            "developer": "",
+                            "developer_id": "",
+                            "category": "",
+                            "icon_url": icon,
+                            "rating": None,
+                            "reviews_count": 0,
+                            "price": "Free",
+                            "store_url": f"https://play.google.com/store/apps/details?id={pkg}",
+                        })
+                        if len(hits) >= limit:
+                            break
+            return hits
+    except Exception:
+        return []
+
+
+async def lookup_developer_apps(developer_id: str, platform: str = "ios", country: str = "us") -> List[dict]:
+    """Find all apps published by a developer/artist."""
+    if platform.lower() == "ios":
+        url = "https://itunes.apple.com/lookup"
+        params = {"id": developer_id, "entity": "software", "country": country.lower()}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, params=params, timeout=10.0)
+                if resp.status_code != 200:
+                    return []
+                results = resp.json().get("results", [])
+                apps = []
+                for x in results:
+                    if x.get("wrapperType") == "software":
+                        rating = x.get("averageUserRating")
+                        apps.append({
+                            "platform": "iOS",
+                            "app_id": str(x.get("trackId")),
+                            "app_name": x.get("trackName", ""),
+                            "developer": x.get("artistName", ""),
+                            "category": x.get("primaryGenreName", ""),
+                            "icon_url": x.get("artworkUrl100") or "",
+                            "rating": round(float(rating), 1) if rating is not None else None,
+                            "price": x.get("formattedPrice") or "Free",
+                            "store_url": x.get("trackViewUrl", ""),
+                        })
+                return apps
+        except Exception:
+            return []
+    else:
+        # Google Play developer lookup
+        url = f"https://play.google.com/store/search?q=pub:{developer_id}&c=apps&hl=en&gl={country.lower()}"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=HEADERS, timeout=10.0)
+                if resp.status_code != 200:
+                    return []
+                soup = BeautifulSoup(resp.text, "html.parser")
+                hits = []
+                for a in soup.find_all("a", href=re.compile(r"/store/apps/details\?id=")):
+                    m = re.search(r"id=([a-zA-Z0-9_\.]+)", a.get("href", ""))
+                    if m and m.group(1) not in [h["app_id"] for h in hits]:
+                        pkg = m.group(1)
+                        img = a.find("img")
+                        icon = img["src"] if img and "src" in img.attrs else ""
+                        hits.append({
+                            "platform": "Android",
+                            "app_id": pkg,
+                            "app_name": clean_android_title(a.get_text(strip=True)) or pkg,
+                            "developer": developer_id,
+                            "category": "",
+                            "icon_url": icon,
+                            "rating": None,
+                            "price": "Free",
+                            "store_url": f"https://play.google.com/store/apps/details?id={pkg}",
+                        })
+                        if len(hits) >= 10:
+                            break
+                return hits
+        except Exception:
+            return []
 
 
 # ============================================================================
@@ -437,10 +654,19 @@ async def resolve_mixed_batch(
                 "app_name": "Invalid ID / Format",
                 "bundle_id": "",
                 "developer": "",
+                "developer_id": "",
                 "category": "",
+                "icon_url": "",
+                "rating": None,
+                "reviews_count": 0,
+                "price": "",
+                "version": "",
+                "content_rating": "",
+                "min_os": "",
                 "store_url": "",
                 "storefront": "",
                 "source": "invalid_input",
+                "status": "Invalid ID",
                 "found": False,
             })
             continue
@@ -458,10 +684,19 @@ async def resolve_mixed_batch(
                 "app_name": info["app_name"],
                 "bundle_id": info.get("bundle_id", "") or aid,
                 "developer": info.get("developer", ""),
+                "developer_id": info.get("developer_id", ""),
                 "category": info.get("category", ""),
+                "icon_url": info.get("icon_url", ""),
+                "rating": info.get("rating"),
+                "reviews_count": info.get("reviews_count", 0),
+                "price": info.get("price", "Free"),
+                "version": info.get("version", ""),
+                "content_rating": info.get("content_rating", ""),
+                "min_os": info.get("min_os", ""),
                 "store_url": info.get("store_url", ""),
                 "storefront": info.get("storefront", ""),
                 "source": info.get("source", ""),
+                "status": info.get("status", "Live"),
                 "found": True,
             })
         else:
@@ -469,13 +704,22 @@ async def resolve_mixed_batch(
                 "input": raw,
                 "platform": platform,
                 "app_id": aid,
-                "app_name": "Not Found / Removed",
+                "app_name": "Not Found / Delisted",
                 "bundle_id": aid,
                 "developer": "",
+                "developer_id": "",
                 "category": "",
+                "icon_url": "",
+                "rating": None,
+                "reviews_count": 0,
+                "price": "",
+                "version": "",
+                "content_rating": "",
+                "min_os": "",
                 "store_url": f"https://apps.apple.com/app/id{aid}" if platform == "iOS" else f"https://play.google.com/store/apps/details?id={aid}",
                 "storefront": "",
                 "source": "not_found",
+                "status": "Delisted / Not Found",
                 "found": False,
             })
 
@@ -507,6 +751,39 @@ def index_ui():
     return HTML_PAGE
 
 
+@app.get("/search/apps")
+async def search_apps_endpoint(
+    query: str = Query(..., min_length=2, description="App name or keyword"),
+    platform: str = Query("auto"),
+    country: str = Query("us"),
+    limit: int = Query(4, ge=1, le=10),
+):
+    """Reverse search: find app IDs and metadata by app name/keyword."""
+    plat = platform.lower()
+    tasks = []
+    if plat in {"auto", "ios"}:
+        tasks.append(search_apple_apps(query, country, limit))
+    if plat in {"auto", "android"}:
+        tasks.append(search_google_apps(query, country, limit))
+
+    results = await asyncio.gather(*tasks)
+    merged = []
+    for r in results:
+        merged.extend(r)
+    return {"query": query, "count": len(merged), "results": merged}
+
+
+@app.get("/developer/apps")
+async def developer_apps_endpoint(
+    developer_id: str = Query(..., description="Developer ID or publisher name"),
+    platform: str = Query("ios"),
+    country: str = Query("us"),
+):
+    """Retrieve other apps published by a developer."""
+    apps = await lookup_developer_apps(developer_id, platform, country)
+    return {"developer_id": developer_id, "platform": platform, "count": len(apps), "apps": apps}
+
+
 @app.get("/lookup/ios/{app_id}")
 async def lookup_ios_single(
     app_id: str,
@@ -519,7 +796,7 @@ async def lookup_ios_single(
     res = await resolve_ios_ids([clean_id], countries.split(","), scrape_fallback)
     info = res.get(clean_id)
     if not info:
-        return {"platform": "iOS", "app_id": clean_id, "app_name": "Not Found / Removed", "source": "not_found"}
+        return {"platform": "iOS", "app_id": clean_id, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found"}
     return {"app_id": clean_id, **info}
 
 
@@ -534,7 +811,7 @@ async def lookup_android_single(
     res = await resolve_android_packages([clean_pkg], countries.split(","))
     info = res.get(clean_pkg)
     if not info:
-        return {"platform": "Android", "app_id": clean_pkg, "app_name": "Not Found / Removed", "source": "not_found"}
+        return {"platform": "Android", "app_id": clean_pkg, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found"}
     return {"app_id": clean_pkg, **info}
 
 
@@ -560,8 +837,14 @@ async def lookup_quick_interactive(payload: QuickRequest):
         countries=country_list,
         scrape_fallback=payload.scrape_fallback,
     )
-    resolved_count = sum(1 for r in results if r.get("found"))
-    return {"total": len(results), "resolved": resolved_count, "results": results}
+    live_count = sum(1 for r in results if r.get("status") in {"Live", "Region-Restricted"})
+    delisted_count = sum(1 for r in results if not r.get("found"))
+    return {
+        "total": len(results),
+        "resolved": live_count,
+        "delisted": delisted_count,
+        "results": results,
+    }
 
 
 @app.post("/lookup/batch")
@@ -572,8 +855,8 @@ async def lookup_batch(payload: BatchRequest):
         countries=payload.countries,
         scrape_fallback=payload.scrape_fallback,
     )
-    resolved_count = sum(1 for r in results if r.get("found"))
-    return {"total": len(results), "resolved": resolved_count, "results": results}
+    live_count = sum(1 for r in results if r.get("status") in {"Live", "Region-Restricted"})
+    return {"total": len(results), "resolved": live_count, "results": results}
 
 
 @app.post("/lookup/excel")
@@ -612,12 +895,20 @@ async def lookup_excel(
     )
 
     # Attach enriched metadata columns
+    df["Store_Status"] = [r["status"] for r in resolved_list]
     df["Platform"] = [r["platform"] for r in resolved_list]
     df["Extracted_ID"] = [r["app_id"] for r in resolved_list]
     df["App_Name"] = [r["app_name"] for r in resolved_list]
     df["Developer"] = [r["developer"] for r in resolved_list]
     df["Category"] = [r["category"] for r in resolved_list]
+    df["Rating"] = [r.get("rating") for r in resolved_list]
+    df["Reviews_Count"] = [r.get("reviews_count") for r in resolved_list]
+    df["Price"] = [r.get("price") for r in resolved_list]
+    df["Version"] = [r.get("version") for r in resolved_list]
+    df["Content_Rating"] = [r.get("content_rating") for r in resolved_list]
+    df["Min_OS"] = [r.get("min_os") for r in resolved_list]
     df["Store_URL"] = [r["store_url"] for r in resolved_list]
+    df["Icon_URL"] = [r.get("icon_url") for r in resolved_list]
     df["Storefront"] = [r["storefront"] for r in resolved_list]
     df["Source"] = [r["source"] for r in resolved_list]
 
@@ -635,7 +926,7 @@ async def lookup_excel(
 
 
 # ============================================================================
-# Minimal, Subtle, Unified User Interface
+# Minimal, Subtle, Unified User Interface (With Drawer & Reverse Search)
 # ============================================================================
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -655,9 +946,10 @@ HTML_PAGE = """<!DOCTYPE html>
       --border-focus: #111827;
       --primary: #111827;
       --primary-hover: #1f2937;
-      --primary-active: #030712;
       --badge-bg: #f3f4f6;
       --badge-text: #374151;
+      --success: #16a34a;
+      --danger: #dc2626;
       --radius: 14px;
       --radius-sm: 8px;
       --transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
@@ -669,13 +961,13 @@ HTML_PAGE = """<!DOCTYPE html>
       font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
-      padding: 56px 20px 80px;
+      padding: 50px 20px 80px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
 
     .container {
-      max-width: 660px;
+      max-width: 720px;
       margin: 0 auto;
     }
 
@@ -693,7 +985,7 @@ HTML_PAGE = """<!DOCTYPE html>
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
     .header h1 {
@@ -723,14 +1015,14 @@ HTML_PAGE = """<!DOCTYPE html>
       background: #f3f4f6;
       padding: 3px;
       border-radius: 10px;
-      margin-bottom: 22px;
+      margin-bottom: 20px;
       gap: 3px;
     }
     .segmented button {
       flex: 1;
       border: none;
       background: transparent;
-      padding: 7px 14px;
+      padding: 8px 14px;
       font-size: 13px;
       font-weight: 500;
       color: var(--text-muted);
@@ -756,7 +1048,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .dropzone {
       border: 1.5px dashed #d1d5db;
       border-radius: 12px;
-      padding: 38px 20px;
+      padding: 36px 20px;
       text-align: center;
       background: #fafafa;
       cursor: pointer;
@@ -812,18 +1104,9 @@ HTML_PAGE = """<!DOCTYPE html>
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .file-pill-left svg {
-      flex-shrink: 0;
-      color: var(--text-muted);
-    }
-    .file-pill-name {
-      font-weight: 500;
-      color: var(--text);
-    }
-    .file-pill-size {
-      color: var(--text-subtle);
-      font-size: 12px;
-    }
+    .file-pill-left svg { flex-shrink: 0; color: var(--text-muted); }
+    .file-pill-name { font-weight: 500; color: var(--text); }
+    .file-pill-size { color: var(--text-subtle); font-size: 12px; }
     .file-pill-remove {
       background: transparent;
       border: none;
@@ -834,10 +1117,7 @@ HTML_PAGE = """<!DOCTYPE html>
       border-radius: 4px;
       line-height: 1;
     }
-    .file-pill-remove:hover {
-      color: #ef4444;
-      background: #fee2e2;
-    }
+    .file-pill-remove:hover { color: #ef4444; background: #fee2e2; }
 
     /* Buttons */
     .btn-main {
@@ -856,13 +1136,24 @@ HTML_PAGE = """<!DOCTYPE html>
       justify-content: center;
       gap: 8px;
     }
-    .btn-main:hover {
-      background: var(--primary-hover);
+    .btn-main:hover { background: var(--primary-hover); }
+    .btn-main:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .btn-ghost {
+      padding: 7px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: var(--transition);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
     }
-    .btn-main:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
+    .btn-ghost:hover { background: #f9fafb; color: var(--text); border-color: #d1d5db; }
 
     /* Collapsible Advanced Options */
     details.advanced {
@@ -882,9 +1173,7 @@ HTML_PAGE = """<!DOCTYPE html>
       gap: 5px;
       transition: var(--transition);
     }
-    details.advanced summary:hover {
-      color: var(--text);
-    }
+    details.advanced summary:hover { color: var(--text); }
     .advanced-body {
       padding-top: 14px;
       display: grid;
@@ -908,20 +1197,10 @@ HTML_PAGE = """<!DOCTYPE html>
       outline: none;
       transition: var(--transition);
     }
-    input[type="text"]:focus, textarea:focus {
-      border-color: var(--border-focus);
-    }
-    .input-hint {
-      font-size: 11.5px;
-      color: var(--text-subtle);
-      margin-top: 4px;
-    }
+    input[type="text"]:focus, textarea:focus { border-color: var(--border-focus); }
+    .input-hint { font-size: 11.5px; color: var(--text-subtle); margin-top: 4px; }
 
-    /* Platform Radio Buttons in Advanced */
-    .radio-group {
-      display: flex;
-      gap: 8px;
-    }
+    .radio-group { display: flex; gap: 8px; }
     .radio-group label {
       flex: 1;
       padding: 7px 10px;
@@ -949,15 +1228,36 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 12px;
       color: var(--text-muted);
       cursor: pointer;
-      margin-top: 2px;
     }
     .checkbox-row input { accent-color: var(--primary); }
+
+    /* Search Sub-Tabs (ID vs Name) */
+    .search-subnav {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .subnav-btn {
+      padding: 5px 10px;
+      background: transparent;
+      border: none;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .subnav-btn.active {
+      background: #f3f4f6;
+      color: var(--text);
+      font-weight: 600;
+    }
 
     /* Instant Search View */
     textarea {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       resize: vertical;
-      min-height: 105px;
+      min-height: 95px;
       line-height: 1.6;
       margin-bottom: 8px;
     }
@@ -966,7 +1266,7 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
       font-size: 12px;
       color: var(--text-subtle);
     }
@@ -980,29 +1280,57 @@ HTML_PAGE = """<!DOCTYPE html>
       cursor: pointer;
       transition: var(--transition);
     }
-    .sample-chip:hover {
-      background: #e5e7eb;
-      color: var(--text);
-    }
+    .sample-chip:hover { background: #e5e7eb; color: var(--text); }
 
-    .quick-actions {
-      display: flex;
+    .quick-actions { display: flex; gap: 8px; }
+
+    /* Keyword Search Results Cards */
+    .keyword-results {
+      margin-top: 14px;
+      display: grid;
       gap: 8px;
+      display: none;
     }
-    .btn-ghost {
-      padding: 9px 14px;
-      background: transparent;
+    .app-card-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #f9fafb;
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-muted);
-      cursor: pointer;
+      border-radius: 10px;
       transition: var(--transition);
     }
-    .btn-ghost:hover {
-      background: #f9fafb;
+    .app-card-item:hover { border-color: #cbd5e1; background: #ffffff; }
+    .app-card-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .app-card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 9px;
+      object-fit: cover;
+      border: 1px solid rgba(0,0,0,0.06);
+      background: #e5e7eb;
+    }
+    .app-card-meta { overflow: hidden; }
+    .app-card-title {
+      font-size: 13px;
+      font-weight: 600;
       color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .app-card-sub {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     /* Results Table */
@@ -1017,8 +1345,20 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .results-summary-badge {
       font-size: 12.5px;
+      font-weight: 500;
       color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .export-btns {
+      display: flex;
+      gap: 6px;
     }
     .table-box {
       border: 1px solid var(--border);
@@ -1034,13 +1374,14 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     th {
       background: #fafafa;
-      padding: 8px 12px;
+      padding: 9px 12px;
       font-weight: 500;
       color: var(--text-muted);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
       white-space: nowrap;
+      z-index: 2;
     }
     td {
       padding: 9px 12px;
@@ -1048,23 +1389,150 @@ HTML_PAGE = """<!DOCTYPE html>
       vertical-align: middle;
       white-space: nowrap;
     }
+    tr.clickable-row { cursor: pointer; transition: var(--transition); }
+    tr.clickable-row:hover td { background: #f8fafc; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #fafafa; }
+
+    .tbl-app-cell {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .tbl-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: #e5e7eb;
+      border: 1px solid rgba(0,0,0,0.05);
+      flex-shrink: 0;
+    }
+
     .badge-plat {
       display: inline-block;
-      padding: 2px 6px;
+      padding: 2px 5px;
       border-radius: 4px;
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 500;
       background: #f3f4f6;
       color: #374151;
     }
-    .store-link {
-      color: #2563eb;
-      text-decoration: none;
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
       font-weight: 500;
     }
-    .store-link:hover { text-decoration: underline; }
+    .status-live { background: #ecfdf5; color: var(--success); }
+    .status-delisted { background: #fef2f2; color: var(--danger); }
+    .status-restricted { background: #fefce8; color: #854d0e; }
+
+    /* Interactive Slide-Over Drawer */
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(2px);
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: -420px;
+      width: 400px;
+      max-width: 90vw;
+      height: 100%;
+      background: #ffffff;
+      box-shadow: -4px 0 24px rgba(0, 0, 0, 0.1);
+      z-index: 101;
+      transition: right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow-y: auto;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+    }
+    .drawer.open { right: 0; }
+    .drawer-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: #f3f4f6;
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+    }
+    .drawer-close:hover { background: #e5e7eb; color: var(--text); }
+    .drawer-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 16px;
+      object-fit: cover;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      border: 1px solid rgba(0,0,0,0.06);
+      margin-bottom: 14px;
+    }
+    .drawer-title { font-size: 18px; font-weight: 700; color: var(--text); line-height: 1.3; margin-bottom: 4px; }
+    .drawer-dev { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
+    .drawer-dev-link { color: #2563eb; text-decoration: none; cursor: pointer; }
+    .drawer-dev-link:hover { text-decoration: underline; }
+
+    .drawer-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .drawer-pill {
+      background: #f3f4f6;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .qr-card {
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .qr-img {
+      width: 140px;
+      height: 140px;
+      margin: 0 auto 8px;
+      display: block;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 6px;
+      border: 1px solid var(--border);
+    }
+    .qr-caption { font-size: 11.5px; color: var(--text-muted); }
+
+    .drawer-actions {
+      display: grid;
+      gap: 8px;
+      margin-top: auto;
+    }
 
     /* Spinner */
     .spinner {
@@ -1076,9 +1544,7 @@ HTML_PAGE = """<!DOCTYPE html>
       animation: spin 0.6s linear infinite;
       display: inline-block;
     }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Footer */
     .footer {
@@ -1087,13 +1553,8 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 12px;
       color: var(--text-subtle);
     }
-    .footer a {
-      color: var(--text-muted);
-      text-decoration: none;
-    }
-    .footer a:hover {
-      text-decoration: underline;
-    }
+    .footer a { color: var(--text-muted); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -1108,7 +1569,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </svg>
     </div>
     <h1>App Lookup</h1>
-    <p>Enrich iOS App Store &amp; Google Play metadata in bulk or individually.</p>
+    <p>Enrich App Store &amp; Google Play metadata in bulk or individually.</p>
   </div>
 
   <!-- Card -->
@@ -1170,7 +1631,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <div class="form-group">
               <label>Storefront Countries (priority order)</label>
               <input type="text" name="countries" value="in,tw,us,gb">
-              <div class="input-hint">Searches in this country order for region-locked apps.</div>
+              <div class="input-hint">Priority order for regional and country-locked apps.</div>
             </div>
             <div class="form-group">
               <label>ID Column Header (optional)</label>
@@ -1187,22 +1648,38 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <!-- PANE 2: INSTANT SEARCH -->
     <div class="tab-pane" id="pane-quick">
-      <textarea id="quick-input" placeholder="Paste App IDs, package names, or store URLs (one per line)..."></textarea>
-
-      <!-- Sample Chips -->
-      <div class="sample-row">
-        <span>Try:</span>
-        <button type="button" class="sample-chip" onclick="addSample('com.whatsapp')">+ WhatsApp (Android)</button>
-        <button type="button" class="sample-chip" onclick="addSample('310633997')">+ WhatsApp (iOS)</button>
-        <button type="button" class="sample-chip" onclick="addSample('org.mozilla.firefox')">+ Firefox</button>
-        <button type="button" class="sample-chip" onclick="addSample('com.spotify.music')">+ Spotify</button>
+      <!-- Search Sub-Navigation -->
+      <div class="search-subnav">
+        <button type="button" class="subnav-btn active" id="subnav-id" onclick="setSearchSubnav('id')">By ID / Store URL</button>
+        <button type="button" class="subnav-btn" id="subnav-name" onclick="setSearchSubnav('name')">Reverse Search by Name</button>
       </div>
 
-      <div class="quick-actions">
-        <button type="button" class="btn-main" style="flex: 2;" id="btn-quick-run" onclick="runSearch()">
-          <span id="quick-label">Look Up Apps</span>
-        </button>
-        <button type="button" class="btn-ghost" onclick="clearSearch()">Clear</button>
+      <!-- Mode A: By ID / URL -->
+      <div id="search-box-id">
+        <textarea id="quick-input" placeholder="Paste App IDs, package names, or store URLs (one per line)..."></textarea>
+        <!-- Sample Chips -->
+        <div class="sample-row">
+          <span>Try:</span>
+          <button type="button" class="sample-chip" onclick="addSample('com.whatsapp')">+ WhatsApp (Android)</button>
+          <button type="button" class="sample-chip" onclick="addSample('310633997')">+ WhatsApp (iOS)</button>
+          <button type="button" class="sample-chip" onclick="addSample('org.mozilla.firefox')">+ Firefox</button>
+          <button type="button" class="sample-chip" onclick="addSample('com.spotify.music')">+ Spotify</button>
+        </div>
+        <div class="quick-actions">
+          <button type="button" class="btn-main" style="flex: 2;" id="btn-quick-run" onclick="runSearch()">
+            <span id="quick-label">Look Up Apps</span>
+          </button>
+          <button type="button" class="btn-ghost" onclick="clearSearch()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Mode B: By Name / Keyword -->
+      <div id="search-box-name" style="display: none;">
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <input type="text" id="name-search-input" placeholder="Type app name (e.g. Notion, Duolingo, Subway Surfers)..." onkeydown="if(event.key==='Enter') runKeywordSearch()">
+          <button type="button" class="btn-main" style="width: auto; padding: 0 16px;" onclick="runKeywordSearch()">Search</button>
+        </div>
+        <div class="keyword-results" id="keyword-results"></div>
       </div>
 
       <!-- Collapsible Advanced Settings for Search -->
@@ -1231,19 +1708,25 @@ HTML_PAGE = """<!DOCTYPE html>
       <!-- Results Table -->
       <div class="results-card" id="results-card">
         <div class="results-topbar">
-          <span id="results-count">Results</span>
-          <button type="button" class="btn-ghost" style="padding: 3px 8px; font-size: 11.5px;" onclick="copyTableAsCsv()">Copy CSV</button>
+          <div class="results-summary-badge" id="results-summary">
+            Results
+          </div>
+          <div class="export-btns">
+            <button type="button" class="btn-ghost" onclick="copyForGoogleSheets()">📋 Copy for Sheets</button>
+            <button type="button" class="btn-ghost" onclick="downloadCsv()">📄 CSV</button>
+            <button type="button" class="btn-ghost" onclick="downloadJson()">{} JSON</button>
+          </div>
         </div>
         <div class="table-box">
           <table>
             <thead>
               <tr>
-                <th>Platform</th>
-                <th>App Name</th>
-                <th>ID / Package</th>
-                <th>Developer</th>
+                <th>App</th>
+                <th>Status</th>
+                <th>Rating</th>
+                <th>Price</th>
                 <th>Category</th>
-                <th>Store</th>
+                <th>Store Link</th>
               </tr>
             </thead>
             <tbody id="results-tbody"></tbody>
@@ -1259,14 +1742,54 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Slide-Over App Drawer -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <button type="button" class="drawer-close" onclick="closeDrawer()">&times;</button>
+  <img id="drawer-icon" src="" alt="App Icon" class="drawer-icon">
+  <div class="drawer-title" id="drawer-title">-</div>
+  <div class="drawer-dev">
+    by <span id="drawer-dev">-</span>
+    <span id="drawer-dev-explore" style="display:none;"> &bull; <a class="drawer-dev-link" onclick="exploreDevApps()">More apps by publisher &rarr;</a></span>
+  </div>
+
+  <div class="drawer-pills">
+    <span class="drawer-pill" id="dpill-plat">iOS</span>
+    <span class="drawer-pill" id="dpill-price">Free</span>
+    <span class="drawer-pill" id="dpill-rating">4.8 ★</span>
+    <span class="drawer-pill" id="dpill-version" style="display:none;">v1.0</span>
+    <span class="drawer-pill" id="dpill-os" style="display:none;">iOS 15.0+</span>
+  </div>
+
+  <!-- QR Code Card -->
+  <div class="qr-card">
+    <img id="drawer-qr" class="qr-img" src="" alt="Store QR Code">
+    <div class="qr-caption">Scan with phone camera to view in store</div>
+  </div>
+
+  <div class="drawer-actions">
+    <a id="drawer-store-btn" href="#" target="_blank" class="btn-main" style="text-decoration:none;">Open in Store &nearr;</a>
+    <button type="button" class="btn-ghost" onclick="copyDrawerId()">Copy App ID / Package</button>
+    <button type="button" class="btn-ghost" onclick="copyDrawerUrl()">Copy Store URL</button>
+  </div>
+</div>
+
 <script>
   let lastResults = [];
+  let currentDrawerApp = null;
 
   function setMode(mode) {
     document.getElementById('pane-file').classList.toggle('active', mode === 'file');
     document.getElementById('pane-quick').classList.toggle('active', mode === 'quick');
     document.getElementById('tab-btn-file').classList.toggle('active', mode === 'file');
     document.getElementById('tab-btn-quick').classList.toggle('active', mode === 'quick');
+  }
+
+  function setSearchSubnav(sub) {
+    document.getElementById('search-box-id').style.display = sub === 'id' ? 'block' : 'none';
+    document.getElementById('search-box-name').style.display = sub === 'name' ? 'block' : 'none';
+    document.getElementById('subnav-id').classList.toggle('active', sub === 'id');
+    document.getElementById('subnav-name').classList.toggle('active', sub === 'name');
   }
 
   // File Handling
@@ -1302,11 +1825,7 @@ HTML_PAGE = """<!DOCTYPE html>
   function addSample(sample) {
     const ta = document.getElementById('quick-input');
     const cur = ta.value.trim();
-    if (cur) {
-      ta.value = cur + '\\n' + sample;
-    } else {
-      ta.value = sample;
-    }
+    ta.value = cur ? cur + '\\n' + sample : sample;
   }
 
   function clearSearch() {
@@ -1360,21 +1879,45 @@ HTML_PAGE = """<!DOCTYPE html>
   function renderTable(data) {
     const card = document.getElementById('results-card');
     const tbody = document.getElementById('results-tbody');
-    const count = document.getElementById('results-count');
+    const summary = document.getElementById('results-summary');
 
-    count.textContent = `Found ${data.resolved} of ${data.total} apps`;
+    const total = data.total || 0;
+    const live = data.resolved || 0;
+    const delisted = data.delisted || 0;
+
+    summary.innerHTML = `Found ${total} apps &bull; <span style="color:var(--success);">&bull; ${live} Live</span>` +
+      (delisted > 0 ? ` &bull; <span style="color:var(--danger);">&bull; ${delisted} Delisted</span>` : '');
+
     tbody.innerHTML = '';
 
-    (data.results || []).forEach(r => {
+    (data.results || []).forEach((r, idx) => {
       const tr = document.createElement('tr');
-      const plat = r.platform === 'iOS' ? 'iOS' : r.platform === 'Android' ? 'Android' : '-';
-      const link = r.store_url ? `<a href="${esc(r.store_url)}" target="_blank" class="store-link">Open &nearr;</a>` : '-';
+      tr.className = 'clickable-row';
+      tr.onclick = () => openDrawer(r);
+
+      const statusCls = r.status === 'Live' ? 'status-live' : (r.status === 'Region-Restricted' ? 'status-restricted' : 'status-delisted');
+      const statusIcon = r.status === 'Live' ? '&bull;' : (r.status === 'Region-Restricted' ? '&bull;' : '&times;');
+
+      const iconImg = r.icon_url 
+        ? `<img src="${esc(r.icon_url)}" class="tbl-icon" alt="" onerror="this.style.display='none'">` 
+        : '<div class="tbl-icon"></div>';
+
+      const ratingTxt = r.rating ? `${r.rating} ★ <span style="color:#9ca3af;font-size:11px;">(${formatCount(r.reviews_count)})</span>` : '-';
+      const link = r.store_url ? `<a href="${esc(r.store_url)}" target="_blank" class="store-link" onclick="event.stopPropagation()">Store &nearr;</a>` : '-';
 
       tr.innerHTML = `
-        <td><span class="badge-plat">${plat}</span></td>
-        <td><strong>${esc(r.app_name)}</strong></td>
-        <td><code>${esc(r.app_id || r.input)}</code></td>
-        <td>${esc(r.developer || '-')}</td>
+        <td>
+          <div class="tbl-app-cell">
+            ${iconImg}
+            <div>
+              <strong>${esc(r.app_name)}</strong>
+              <div style="font-size:11.5px;color:#9ca3af;">${esc(r.developer || r.app_id)}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge-status ${statusCls}">${statusIcon} ${esc(r.status || 'Live')}</span></td>
+        <td>${ratingTxt}</td>
+        <td>${esc(r.price || 'Free')}</td>
         <td>${esc(r.category || '-')}</td>
         <td>${link}</td>
       `;
@@ -1384,21 +1927,182 @@ HTML_PAGE = """<!DOCTYPE html>
     card.style.display = 'block';
   }
 
-  function copyTableAsCsv() {
+  // Reverse Keyword Search
+  async function runKeywordSearch() {
+    const q = document.getElementById('name-search-input').value.trim();
+    if (!q) return;
+
+    const resBox = document.getElementById('keyword-results');
+    resBox.innerHTML = '<div style="font-size:12.5px;color:#6b7280;padding:8px 0;"><span class="spinner" style="border-top-color:#111827;"></span> Searching store catalogs...</div>';
+    resBox.style.display = 'grid';
+
+    try {
+      const resp = await fetch(`/search/apps?query=${encodeURIComponent(q)}&country=us&limit=4`);
+      if (!resp.ok) throw new Error('Search failed');
+      const data = await resp.json();
+
+      if (!data.results || !data.results.length) {
+        resBox.innerHTML = '<div style="font-size:12.5px;color:#6b7280;padding:8px 0;">No apps found matching "' + esc(q) + '".</div>';
+        return;
+      }
+
+      resBox.innerHTML = '';
+      data.results.forEach(app => {
+        const item = document.createElement('div');
+        item.className = 'app-card-item';
+        const ratingStr = app.rating ? `${app.rating} ★` : '';
+        item.innerHTML = `
+          <div class="app-card-left">
+            <img src="${esc(app.icon_url)}" class="app-card-icon" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>'">
+            <div class="app-card-meta">
+              <div class="app-card-title">${esc(app.app_name)}</div>
+              <div class="app-card-sub">
+                <span class="badge-plat">${app.platform}</span>
+                <span>${esc(app.developer || '')}</span>
+                ${ratingStr ? '<span>&bull; ' + ratingStr + '</span>' : ''}
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-ghost" onclick="addSample('${esc(app.app_id)}'); setSearchSubnav('id'); runSearch();">Enrich &rarr;</button>
+          </div>
+        `;
+        resBox.appendChild(item);
+      });
+    } catch (e) {
+      resBox.innerHTML = '<div style="font-size:12.5px;color:#ef4444;padding:8px 0;">Error searching: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  // Drawer Interactions
+  function openDrawer(app) {
+    currentDrawerApp = app;
+    document.getElementById('drawer-title').textContent = app.app_name;
+    document.getElementById('drawer-dev').textContent = app.developer || 'Unknown Publisher';
+    document.getElementById('drawer-icon').src = app.icon_url || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>';
+
+    document.getElementById('dpill-plat').textContent = app.platform;
+    document.getElementById('dpill-price').textContent = app.price || 'Free';
+    document.getElementById('dpill-rating').textContent = app.rating ? `${app.rating} ★ (${formatCount(app.reviews_count)})` : 'No ratings';
+
+    const vPill = document.getElementById('dpill-version');
+    if (app.version) { vPill.textContent = 'v' + app.version; vPill.style.display = 'inline-block'; } else { vPill.style.display = 'none'; }
+
+    const osPill = document.getElementById('dpill-os');
+    if (app.min_os) { osPill.textContent = app.min_os; osPill.style.display = 'inline-block'; } else { osPill.style.display = 'none'; }
+
+    // Developer explore link
+    const devExplore = document.getElementById('drawer-dev-explore');
+    if (app.developer_id || app.developer) {
+      devExplore.style.display = 'inline';
+    } else {
+      devExplore.style.display = 'none';
+    }
+
+    // QR Code
+    const storeUrl = app.store_url || `https://apps.apple.com/app/id${app.app_id}`;
+    document.getElementById('drawer-qr').src = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=4&data=${encodeURIComponent(storeUrl)}`;
+    document.getElementById('drawer-store-btn').href = storeUrl;
+
+    document.getElementById('drawer').classList.add('open');
+    document.getElementById('drawer-overlay').classList.add('open');
+  }
+
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.getElementById('drawer-overlay').classList.remove('open');
+    currentDrawerApp = null;
+  }
+
+  function copyDrawerId() {
+    if (!currentDrawerApp) return;
+    navigator.clipboard.writeText(currentDrawerApp.app_id).then(() => alert('Copied ID: ' + currentDrawerApp.app_id));
+  }
+
+  function copyDrawerUrl() {
+    if (!currentDrawerApp) return;
+    navigator.clipboard.writeText(currentDrawerApp.store_url).then(() => alert('Copied Store URL!'));
+  }
+
+  async function exploreDevApps() {
+    if (!currentDrawerApp) return;
+    const devId = currentDrawerApp.developer_id || currentDrawerApp.developer;
+    const plat = currentDrawerApp.platform || 'iOS';
+    try {
+      const resp = await fetch(`/developer/apps?developer_id=${encodeURIComponent(devId)}&platform=${plat}`);
+      const data = await resp.json();
+      if (data.apps && data.apps.length) {
+        closeDrawer();
+        const ids = data.apps.map(a => a.app_id).join('\\n');
+        document.getElementById('quick-input').value = ids;
+        setSearchSubnav('id');
+        runSearch();
+      } else {
+        alert('No other apps found for this developer.');
+      }
+    } catch (e) {
+      alert('Could not retrieve developer apps.');
+    }
+  }
+
+  // Multi-Format Export Actions
+  function copyForGoogleSheets() {
     if (!lastResults.length) return;
-    const headers = ['Platform', 'App Name', 'ID', 'Developer', 'Category', 'Store URL'];
+    const headers = ['Platform', 'Status', 'App Name', 'ID / Package', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
+    const rows = lastResults.map(r => [
+      r.platform || '',
+      r.status || '',
+      r.app_name || '',
+      r.app_id || r.input || '',
+      r.developer || '',
+      r.category || '',
+      r.rating || '',
+      r.reviews_count || '',
+      r.price || '',
+      r.store_url || ''
+    ]);
+    const tsv = [headers.join('\\t'), ...rows.map(row => row.join('\\t'))].join('\\n');
+    navigator.clipboard.writeText(tsv).then(() => {
+      alert('Copied table to clipboard! Paste directly into Google Sheets (Ctrl+V).');
+    });
+  }
+
+  function downloadCsv() {
+    if (!lastResults.length) return;
+    const headers = ['Platform', 'Status', 'App Name', 'ID', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
     const rows = lastResults.map(r => [
       `"${r.platform || ''}"`,
+      `"${r.status || ''}"`,
       `"${(r.app_name || '').replace(/"/g, '""')}"`,
       `"${r.app_id || r.input || ''}"`,
       `"${(r.developer || '').replace(/"/g, '""')}"`,
       `"${r.category || ''}"`,
+      `"${r.rating || ''}"`,
+      `"${r.reviews_count || ''}"`,
+      `"${r.price || ''}"`,
       `"${r.store_url || ''}"`
     ]);
-    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\\n');
-    navigator.clipboard.writeText(csvContent).then(() => {
-      alert('Copied CSV to clipboard!');
-    });
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(row => row.join(','))].join('\\n');
+    const link = document.createElement('a');
+    link.href = encodeURI(csvContent);
+    link.download = `app_lookup_export_${Date.now()}.csv`;
+    link.click();
+  }
+
+  function downloadJson() {
+    if (!lastResults.length) return;
+    const jsonStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(lastResults, null, 2));
+    const link = document.createElement('a');
+    link.href = jsonStr;
+    link.download = `app_lookup_export_${Date.now()}.json`;
+    link.click();
+  }
+
+  function formatCount(num) {
+    if (!num) return '0';
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return String(num);
   }
 
   function esc(str) {
@@ -1419,4 +2123,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app_store_api:app", host="127.0.0.1", port=8080, reload=True)
-
