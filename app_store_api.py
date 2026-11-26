@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Mobile App Store & Play Store Lookup API", version="3.0.0")
+app = FastAPI(title="Mobile App Store & Play Store Lookup API", version="3.1.0")
 
 HEADERS = {
     "User-Agent": (
@@ -21,18 +21,52 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+DEFAULT_COUNTRIES = ["in", "us", "tw", "gb"]
+
+COUNTRY_NAMES = {
+    "IN": "India (IN)",
+    "US": "United States (US)",
+    "GB": "United Kingdom (GB)",
+    "TW": "Taiwan (TW)",
+    "JP": "Japan (JP)",
+    "DE": "Germany (DE)",
+    "CA": "Canada (CA)",
+    "AU": "Australia (AU)",
+    "FR": "France (FR)",
+    "SG": "Singapore (SG)",
+}
+
+
+def format_region(code: str) -> str:
+    """Format 2-letter ISO country code into readable region name."""
+    c = (code or "").upper().strip()
+    return COUNTRY_NAMES.get(c, c if c else "Global")
+
+
+def parse_countries(countries: Union[str, List[str], None]) -> List[str]:
+    """Parse comma-separated country string or list of codes into a clean lowercase list."""
+    if not countries:
+        return list(DEFAULT_COUNTRIES)
+    if isinstance(countries, str):
+        parts = [c.strip().lower() for c in countries.split(",") if c.strip()]
+        return parts or list(DEFAULT_COUNTRIES)
+    if isinstance(countries, (list, tuple)):
+        parts = [str(c).strip().lower() for c in countries if str(c).strip()]
+        return parts or list(DEFAULT_COUNTRIES)
+    return list(DEFAULT_COUNTRIES)
+
 
 class BatchRequest(BaseModel):
     ids: List[str]
-    platform: str = "auto"  # "auto", "ios", "android"
-    countries: List[str] = ["in", "tw", "us", "gb"]
+    platform: str = "auto"
+    countries: List[str] = DEFAULT_COUNTRIES
     scrape_fallback: bool = True
 
 
 class QuickRequest(BaseModel):
     inputs: List[str]
     platform: str = "auto"
-    countries: str = "in,tw,us,gb"
+    countries: str = "in,us,tw,gb"
     scrape_fallback: bool = True
 
 
@@ -48,7 +82,6 @@ def extract_ios_id(value: object) -> Optional[str]:
     text = str(value).strip()
     if not text or text.lower() == "nan":
         return None
-    # Handle Excel float notation (e.g. "1617391485.0")
     if re.fullmatch(r"\d+\.0+", text):
         text = text.split(".")[0]
     url_match = re.search(r"/id(\d+)", text)
@@ -68,23 +101,19 @@ def extract_android_package(value: object) -> Optional[str]:
     if not text or text.lower() == "nan":
         return None
 
-    # Handle URL: https://play.google.com/store/apps/details?id=com.whatsapp&...
     url_match = re.search(r"[?&]id=([a-zA-Z0-9_\.]+)", text)
     if url_match:
         pkg = url_match.group(1).rstrip("/")
         if "." in pkg and not pkg.endswith("."):
             return pkg
 
-    # Handle market://details?id=...
     market_match = re.search(r"market://details\?id=([a-zA-Z0-9_\.]+)", text)
     if market_match:
         return market_match.group(1).rstrip("/")
 
-    # Handle raw package name format (e.g., com.whatsapp, org.mozilla.firefox)
     pkg_match = re.fullmatch(r"([a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+)", text)
     if pkg_match:
         pkg = pkg_match.group(1)
-        # Exclude common file extensions and general domains
         if pkg.lower().endswith((".xlsx", ".xls", ".csv", ".py", ".txt", ".json", ".pdf", ".zip", ".html")):
             return None
         return pkg
@@ -93,10 +122,7 @@ def extract_android_package(value: object) -> Optional[str]:
 
 
 def extract_app_info(value: object, platform_hint: str = "auto") -> Tuple[Optional[str], Optional[str]]:
-    """
-    Detects platform ('iOS' or 'Android') and extracts the clean App ID / Package Name.
-    Returns (platform, id_or_package).
-    """
+    """Detect platform ('iOS' or 'Android') and clean App ID / Package Name."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None, None
     text = str(value).strip()
@@ -113,8 +139,6 @@ def extract_app_info(value: object, platform_hint: str = "auto") -> Tuple[Option
         pkg = extract_android_package(text)
         return ("Android", pkg) if pkg else (None, None)
 
-    # Auto-detect mode
-    # 1. Explicit domain cues
     if "play.google.com" in text or "market://" in text:
         pkg = extract_android_package(text)
         return ("Android", pkg) if pkg else (None, None)
@@ -123,12 +147,10 @@ def extract_app_info(value: object, platform_hint: str = "auto") -> Tuple[Option
         ios_id = extract_ios_id(text)
         return ("iOS", ios_id) if ios_id else (None, None)
 
-    # 2. Pattern cues: pure numeric or id\d+ -> iOS
     ios_id = extract_ios_id(text)
     if ios_id:
         return ("iOS", ios_id)
 
-    # 3. Dotted package name -> Android
     pkg = extract_android_package(text)
     if pkg:
         return ("Android", pkg)
@@ -137,7 +159,6 @@ def extract_app_info(value: object, platform_hint: str = "auto") -> Tuple[Option
 
 
 def clean_ios_title(title: str) -> str:
-    """Strip Apple directional markers and store suffix."""
     cleaned = title.replace("\u200e", "").replace("\u200f", "").strip()
     cleaned = re.sub(r"\s+on the App Store$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*[-–|]\s*App Store$", "", cleaned, flags=re.IGNORECASE)
@@ -145,7 +166,6 @@ def clean_ios_title(title: str) -> str:
 
 
 def clean_android_title(title: str) -> str:
-    """Strip Google Play Store title suffixes and markers."""
     cleaned = title.replace("\u200e", "").replace("\u200f", "").strip()
     cleaned = re.sub(r"\s*-\s*Apps on Google Play$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+on Google Play$", "", cleaned, flags=re.IGNORECASE)
@@ -153,7 +173,7 @@ def clean_android_title(title: str) -> str:
 
 
 # ============================================================================
-# iOS Store Resolvers (Rich Metadata)
+# iOS Store Resolvers
 # ============================================================================
 
 
@@ -196,7 +216,9 @@ async def lookup_itunes_batch(
                                 "content_rating": item.get("contentAdvisoryRating", ""),
                                 "min_os": f"iOS {item.get('minimumOsVersion')}+" if item.get("minimumOsVersion") else "",
                                 "store_url": item.get("trackViewUrl", ""),
+                                "deep_link": f"itms-apps://itunes.apple.com/app/id{app_id}",
                                 "storefront": country.upper(),
+                                "region": format_region(country),
                                 "source": "itunes_api",
                                 "status": "Live",
                             }
@@ -232,7 +254,6 @@ async def scrape_app_store_page(
             reviews_count = 0
             price = "Free"
 
-            # 1. SoftwareApplication JSON-LD
             for script in soup.find_all("script", type="application/ld+json"):
                 try:
                     ld = json.loads(script.string or "")
@@ -259,7 +280,6 @@ async def scrape_app_store_page(
                 except Exception:
                     continue
 
-            # 2. Fallbacks
             if not app_name:
                 og = soup.find("meta", property="og:title")
                 if og and og.get("content"):
@@ -292,7 +312,9 @@ async def scrape_app_store_page(
                 "content_rating": "",
                 "min_os": "",
                 "store_url": str(resp.url),
+                "deep_link": f"itms-apps://itunes.apple.com/app/id{app_id}",
                 "storefront": country.upper(),
+                "region": format_region(country),
                 "source": "app_store_page",
                 "status": "Live",
             }
@@ -303,27 +325,24 @@ async def scrape_app_store_page(
 
 
 async def resolve_ios_ids(
-    raw_ids: List[str], countries: List[str], scrape_fallback: bool = True
+    raw_ids: List[str], countries: Optional[List[str]] = None, scrape_fallback: bool = True
 ) -> Dict[str, dict]:
-    """Resolve iOS App Store IDs across storefronts with direct page scraping fallback."""
+    """Resolve iOS App Store IDs automatically across storefronts."""
     unique_ids = list(dict.fromkeys([i for i in raw_ids if i]))
     results: Dict[str, dict] = {}
-    clean_countries = [c.strip().lower() for c in countries if c.strip()] or ["in", "us", "tw", "gb"]
+    clean_countries = [c.strip().lower() for c in (countries or DEFAULT_COUNTRIES) if c.strip()]
 
     async with httpx.AsyncClient() as client:
-        # Step 1: Fast iTunes batch query
         for idx, country in enumerate(clean_countries):
             missing = [aid for aid in unique_ids if aid not in results]
             if not missing:
                 break
             batch_hits = await lookup_itunes_batch(client, missing, country)
-            # Flag region restriction if found in fallback country
             for k, v in batch_hits.items():
                 if idx > 0 and v.get("status") == "Live":
                     v["status"] = "Region-Restricted"
             results.update(batch_hits)
 
-        # Step 2: Web page scraping fallback
         if scrape_fallback:
             sem = asyncio.Semaphore(5)
             for idx, country in enumerate(clean_countries):
@@ -342,7 +361,7 @@ async def resolve_ios_ids(
 
 
 # ============================================================================
-# Android Store Resolvers (Rich Metadata)
+# Android Store Resolvers
 # ============================================================================
 
 
@@ -373,7 +392,6 @@ async def scrape_google_play_page(
             price = "Free"
             content_rating = ""
 
-            # 1. SoftwareApplication JSON-LD
             for script in soup.find_all("script", type="application/ld+json"):
                 try:
                     ld = json.loads(script.string or "")
@@ -407,7 +425,6 @@ async def scrape_google_play_page(
                 except Exception:
                     continue
 
-            # 2. Fallbacks
             if not app_name:
                 h1 = soup.find("h1")
                 if h1:
@@ -440,7 +457,9 @@ async def scrape_google_play_page(
                 "content_rating": content_rating,
                 "min_os": "Android",
                 "store_url": f"https://play.google.com/store/apps/details?id={package_name}",
+                "deep_link": f"market://details?id={package_name}",
                 "storefront": country.upper(),
+                "region": format_region(country),
                 "source": "google_play_store",
                 "status": "Live",
             }
@@ -451,12 +470,12 @@ async def scrape_google_play_page(
 
 
 async def resolve_android_packages(
-    packages: List[str], countries: List[str]
+    packages: List[str], countries: Optional[List[str]] = None
 ) -> Dict[str, dict]:
     """Resolve Android package names across specified storefront countries."""
     unique_pkgs = list(dict.fromkeys([p for p in packages if p]))
     results: Dict[str, dict] = {}
-    clean_countries = [c.strip().lower() for c in countries if c.strip()] or ["in", "us", "tw", "gb"]
+    clean_countries = [c.strip().lower() for c in (countries or DEFAULT_COUNTRIES) if c.strip()]
 
     async with httpx.AsyncClient() as client:
         sem = asyncio.Semaphore(5)
@@ -504,6 +523,7 @@ async def search_apple_apps(query: str, country: str = "us", limit: int = 4) -> 
                     "reviews_count": x.get("userRatingCount") or 0,
                     "price": x.get("formattedPrice") or "Free",
                     "store_url": x.get("trackViewUrl", ""),
+                    "region": format_region(country),
                 })
             return items
     except Exception:
@@ -541,6 +561,7 @@ async def search_google_apps(query: str, country: str = "us", limit: int = 4) ->
                             "reviews_count": 0,
                             "price": "Free",
                             "store_url": f"https://play.google.com/store/apps/details?id={pkg}",
+                            "region": format_region(country),
                         })
                         if len(hits) >= limit:
                             break
@@ -574,12 +595,12 @@ async def lookup_developer_apps(developer_id: str, platform: str = "ios", countr
                             "rating": round(float(rating), 1) if rating is not None else None,
                             "price": x.get("formattedPrice") or "Free",
                             "store_url": x.get("trackViewUrl", ""),
+                            "region": format_region(country),
                         })
                 return apps
         except Exception:
             return []
     else:
-        # Google Play developer lookup
         url = f"https://play.google.com/store/search?q=pub:{developer_id}&c=apps&hl=en&gl={country.lower()}"
         try:
             async with httpx.AsyncClient() as client:
@@ -604,6 +625,7 @@ async def lookup_developer_apps(developer_id: str, platform: str = "ios", countr
                             "rating": None,
                             "price": "Free",
                             "store_url": f"https://play.google.com/store/apps/details?id={pkg}",
+                            "region": format_region(country),
                         })
                         if len(hits) >= 10:
                             break
@@ -624,7 +646,7 @@ async def resolve_mixed_batch(
     scrape_fallback: bool = True,
 ) -> List[dict]:
     """Resolve a mixed list of iOS and Android identifiers concurrently."""
-    clean_countries = [c.strip().lower() for c in (countries or ["in", "tw", "us", "gb"]) if c.strip()]
+    clean_countries = [c.strip().lower() for c in (countries or DEFAULT_COUNTRIES) if c.strip()]
 
     parsed_items = []
     ios_ids = []
@@ -638,7 +660,6 @@ async def resolve_mixed_batch(
         elif platform == "Android" and aid:
             android_pkgs.append(aid)
 
-    # Concurrently execute iOS and Android lookups
     ios_task = resolve_ios_ids(ios_ids, clean_countries, scrape_fallback) if ios_ids else asyncio.sleep(0, result={})
     android_task = resolve_android_packages(android_pkgs, clean_countries) if android_pkgs else asyncio.sleep(0, result={})
 
@@ -664,7 +685,9 @@ async def resolve_mixed_batch(
                 "content_rating": "",
                 "min_os": "",
                 "store_url": "",
+                "deep_link": "",
                 "storefront": "",
+                "region": "Unknown",
                 "source": "invalid_input",
                 "status": "Invalid ID",
                 "found": False,
@@ -694,7 +717,9 @@ async def resolve_mixed_batch(
                 "content_rating": info.get("content_rating", ""),
                 "min_os": info.get("min_os", ""),
                 "store_url": info.get("store_url", ""),
+                "deep_link": info.get("deep_link", ""),
                 "storefront": info.get("storefront", ""),
+                "region": info.get("region", format_region(info.get("storefront", ""))),
                 "source": info.get("source", ""),
                 "status": info.get("status", "Live"),
                 "found": True,
@@ -717,7 +742,9 @@ async def resolve_mixed_batch(
                 "content_rating": "",
                 "min_os": "",
                 "store_url": f"https://apps.apple.com/app/id{aid}" if platform == "iOS" else f"https://play.google.com/store/apps/details?id={aid}",
+                "deep_link": f"itms-apps://itunes.apple.com/app/id{aid}" if platform == "iOS" else f"market://details?id={aid}",
                 "storefront": "",
+                "region": "Not Available",
                 "source": "not_found",
                 "status": "Delisted / Not Found",
                 "found": False,
@@ -787,41 +814,41 @@ async def developer_apps_endpoint(
 @app.get("/lookup/ios/{app_id}")
 async def lookup_ios_single(
     app_id: str,
-    countries: str = Query("in,tw,us,gb", description="Comma-separated country codes"),
+    countries: str = Query("in,us,tw,gb", description="Comma-separated country codes"),
     scrape_fallback: bool = Query(True),
 ):
     clean_id = extract_ios_id(app_id)
     if not clean_id:
         raise HTTPException(status_code=400, detail="Invalid iOS App Store ID or URL")
-    res = await resolve_ios_ids([clean_id], countries.split(","), scrape_fallback)
+    res = await resolve_ios_ids([clean_id], parse_countries(countries), scrape_fallback)
     info = res.get(clean_id)
     if not info:
-        return {"platform": "iOS", "app_id": clean_id, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found"}
+        return {"platform": "iOS", "app_id": clean_id, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found", "region": "Not Available"}
     return {"app_id": clean_id, **info}
 
 
 @app.get("/lookup/android/{package_name}")
 async def lookup_android_single(
     package_name: str,
-    countries: str = Query("in,tw,us,gb", description="Comma-separated country codes"),
+    countries: str = Query("in,us,tw,gb", description="Comma-separated country codes"),
 ):
     clean_pkg = extract_android_package(package_name)
     if not clean_pkg:
         raise HTTPException(status_code=400, detail="Invalid Android package name or Play Store URL")
-    res = await resolve_android_packages([clean_pkg], countries.split(","))
+    res = await resolve_android_packages([clean_pkg], parse_countries(countries))
     info = res.get(clean_pkg)
     if not info:
-        return {"platform": "Android", "app_id": clean_pkg, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found"}
+        return {"platform": "Android", "app_id": clean_pkg, "app_name": "Not Found / Delisted", "source": "not_found", "status": "Delisted / Not Found", "region": "Not Available"}
     return {"app_id": clean_pkg, **info}
 
 
 @app.get("/lookup/auto/{identifier:path}")
 async def lookup_auto_single(
     identifier: str,
-    countries: str = Query("in,tw,us,gb"),
+    countries: str = Query("in,us,tw,gb"),
     scrape_fallback: bool = Query(True),
 ):
-    results = await resolve_mixed_batch([identifier], platform_hint="auto", countries=countries.split(","), scrape_fallback=scrape_fallback)
+    results = await resolve_mixed_batch([identifier], platform_hint="auto", countries=parse_countries(countries), scrape_fallback=scrape_fallback)
     if results:
         return results[0]
     raise HTTPException(status_code=404, detail="Could not process identifier")
@@ -830,11 +857,10 @@ async def lookup_auto_single(
 @app.post("/lookup/quick")
 async def lookup_quick_interactive(payload: QuickRequest):
     """Fast endpoint for the interactive UI quick search table."""
-    country_list = [c.strip().lower() for c in payload.countries.split(",") if c.strip()]
     results = await resolve_mixed_batch(
         raw_inputs=payload.inputs,
         platform_hint=payload.platform,
-        countries=country_list,
+        countries=parse_countries(payload.countries),
         scrape_fallback=payload.scrape_fallback,
     )
     live_count = sum(1 for r in results if r.get("status") in {"Live", "Region-Restricted"})
@@ -863,7 +889,7 @@ async def lookup_batch(payload: BatchRequest):
 async def lookup_excel(
     file: UploadFile = File(...),
     platform: str = Form("auto"),
-    countries: str = Form("in,tw,us,gb"),
+    countries: str = Form("in,us,tw,gb"),
     column_name: Optional[str] = Form(None),
     scrape_fallback: bool = Form(True),
 ):
@@ -872,10 +898,25 @@ async def lookup_excel(
 
     try:
         if filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(raw_bytes), dtype=str)
+            df = None
+            enc_errors = []
+            for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+                try:
+                    df = pd.read_csv(io.BytesIO(raw_bytes), encoding=enc, dtype=str)
+                    break
+                except Exception as e:
+                    enc_errors.append(str(e))
+            if df is None:
+                raise HTTPException(status_code=400, detail=f"Could not read CSV file: {enc_errors[-1]}")
+
             if len(df.columns) >= 1 and extract_app_info(df.columns[0], platform)[1] is not None:
-                df = pd.read_csv(io.BytesIO(raw_bytes), header=None, dtype=str)
-                df.columns = ["app_id"] + [f"col_{i}" for i in range(1, len(df.columns))]
+                for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+                    try:
+                        df = pd.read_csv(io.BytesIO(raw_bytes), header=None, encoding=enc, dtype=str)
+                        df.columns = ["app_id"] + [f"col_{i}" for i in range(1, len(df.columns))]
+                        break
+                    except Exception:
+                        continue
         else:
             df = pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
             if len(df.columns) >= 1 and extract_app_info(df.columns[0], platform)[1] is not None:
@@ -890,12 +931,13 @@ async def lookup_excel(
     resolved_list = await resolve_mixed_batch(
         raw_inputs=raw_list,
         platform_hint=platform,
-        countries=countries.split(","),
+        countries=parse_countries(countries),
         scrape_fallback=scrape_fallback,
     )
 
-    # Attach enriched metadata columns
+    # Attach enriched metadata columns (with direct Region output)
     df["Store_Status"] = [r["status"] for r in resolved_list]
+    df["Region"] = [r.get("region", "Global") for r in resolved_list]
     df["Platform"] = [r["platform"] for r in resolved_list]
     df["Extracted_ID"] = [r["app_id"] for r in resolved_list]
     df["App_Name"] = [r["app_name"] for r in resolved_list]
@@ -908,8 +950,8 @@ async def lookup_excel(
     df["Content_Rating"] = [r.get("content_rating") for r in resolved_list]
     df["Min_OS"] = [r.get("min_os") for r in resolved_list]
     df["Store_URL"] = [r["store_url"] for r in resolved_list]
+    df["Deep_Link"] = [r.get("deep_link") for r in resolved_list]
     df["Icon_URL"] = [r.get("icon_url") for r in resolved_list]
-    df["Storefront"] = [r["storefront"] for r in resolved_list]
     df["Source"] = [r["source"] for r in resolved_list]
 
     output_buffer = io.BytesIO()
@@ -926,7 +968,7 @@ async def lookup_excel(
 
 
 # ============================================================================
-# Minimal, Subtle, Unified User Interface (With Drawer & Reverse Search)
+# Minimal, Subtle, Unified User Interface (With Real-Time Loading & Auto Region)
 # ============================================================================
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -1119,6 +1161,56 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     .file-pill-remove:hover { color: #ef4444; background: #fee2e2; }
 
+    /* Live Progress Bar Container for Spreadsheet Download */
+    .progress-box {
+      display: none;
+      background: #f9fafb;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+    }
+    .progress-track {
+      width: 100%;
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 10px;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+      border-radius: 999px;
+      transition: width 0.35s ease;
+      background-image: linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent);
+      background-size: 16px 16px;
+      animation: progress-stripes 1s linear infinite;
+    }
+    @keyframes progress-stripes {
+      from { background-position: 16px 0; }
+      to { background-position: 0 0; }
+    }
+    .progress-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+    }
+    .progress-status-text {
+      color: var(--text);
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .progress-pct {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
     /* Buttons */
     .btn-main {
       width: 100%;
@@ -1198,7 +1290,6 @@ HTML_PAGE = """<!DOCTYPE html>
       transition: var(--transition);
     }
     input[type="text"]:focus, textarea:focus { border-color: var(--border-focus); }
-    .input-hint { font-size: 11.5px; color: var(--text-subtle); margin-top: 4px; }
 
     .radio-group { display: flex; gap: 8px; }
     .radio-group label {
@@ -1231,7 +1322,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     .checkbox-row input { accent-color: var(--primary); }
 
-    /* Search Sub-Tabs (ID vs Name) */
+    /* Search Sub-Tabs */
     .search-subnav {
       display: flex;
       gap: 6px;
@@ -1283,6 +1374,19 @@ HTML_PAGE = """<!DOCTYPE html>
     .sample-chip:hover { background: #e5e7eb; color: var(--text); }
 
     .quick-actions { display: flex; gap: 8px; }
+
+    /* Shimmer Skeleton Loaders for Live Fetching */
+    .shimmer-cell {
+      background: linear-gradient(90deg, #f0f1f3 25%, #e2e4e8 50%, #f0f1f3 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 5px;
+      display: inline-block;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
 
     /* Keyword Search Results Cards */
     .keyword-results {
@@ -1356,15 +1460,12 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       gap: 6px;
     }
-    .export-btns {
-      display: flex;
-      gap: 6px;
-    }
+    .export-btns { display: flex; gap: 6px; }
     .table-box {
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow-x: auto;
-      max-height: 380px;
+      max-height: 400px;
     }
     table {
       width: 100%;
@@ -1410,12 +1511,22 @@ HTML_PAGE = """<!DOCTYPE html>
 
     .badge-plat {
       display: inline-block;
-      padding: 2px 5px;
+      padding: 2px 6px;
       border-radius: 4px;
-      font-size: 10.5px;
+      font-size: 11px;
       font-weight: 500;
       background: #f3f4f6;
       color: #374151;
+    }
+    .badge-region {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #f1f5f9;
+      color: #1e293b;
+      border: 1px solid #e2e8f0;
     }
     .badge-status {
       display: inline-flex;
@@ -1441,10 +1552,7 @@ HTML_PAGE = """<!DOCTYPE html>
       pointer-events: none;
       transition: opacity 0.2s ease;
     }
-    .drawer-overlay.open {
-      opacity: 1;
-      pointer-events: auto;
-    }
+    .drawer-overlay.open { opacity: 1; pointer-events: auto; }
     .drawer {
       position: fixed;
       top: 0;
@@ -1507,6 +1615,11 @@ HTML_PAGE = """<!DOCTYPE html>
       font-weight: 500;
       color: var(--text-muted);
     }
+    .drawer-pill-region {
+      background: #eff6ff;
+      color: #1e40af;
+      border: 1px solid #dbeafe;
+    }
 
     .qr-card {
       background: #fafafa;
@@ -1534,7 +1647,7 @@ HTML_PAGE = """<!DOCTYPE html>
       margin-top: auto;
     }
 
-    /* Spinner */
+    /* Live Spinner */
     .spinner {
       border: 2px solid rgba(255,255,255,0.3);
       border-radius: 50%;
@@ -1543,6 +1656,10 @@ HTML_PAGE = """<!DOCTYPE html>
       height: 14px;
       animation: spin 0.6s linear infinite;
       display: inline-block;
+    }
+    .spinner-dark {
+      border: 2px solid rgba(17,24,39,0.2);
+      border-top: 2px solid #111827;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -1569,7 +1686,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </svg>
     </div>
     <h1>App Lookup</h1>
-    <p>Enrich App Store &amp; Google Play metadata in bulk or individually.</p>
+    <p>Enrich App Store &amp; Google Play metadata automatically across global regions.</p>
   </div>
 
   <!-- Card -->
@@ -1588,7 +1705,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <!-- PANE 1: SPREADSHEET ENRICHER -->
     <div class="tab-pane active" id="pane-file">
-      <form action="/lookup/excel" method="post" enctype="multipart/form-data" id="excel-form" onsubmit="handleFormSubmit(event)">
+      <form id="excel-form" onsubmit="handleFormSubmit(event)">
         <!-- Dropzone -->
         <div class="dropzone" id="dropzone">
           <input type="file" name="file" id="file-input" accept=".xlsx,.xls,.csv" required onchange="handleFile(this)">
@@ -1611,12 +1728,25 @@ HTML_PAGE = """<!DOCTYPE html>
           <button type="button" class="file-pill-remove" onclick="removeFile()" title="Remove file">&times;</button>
         </div>
 
+        <!-- Live Download Progress Indicator -->
+        <div class="progress-box" id="progress-box">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-status-row">
+            <span class="progress-status-text" id="progress-status-text">
+              <span class="spinner spinner-dark"></span> Starting enrichment...
+            </span>
+            <span class="progress-pct" id="progress-pct">0%</span>
+          </div>
+        </div>
+
         <!-- Primary Action Button -->
         <button type="submit" class="btn-main" id="btn-submit-file">
           <span id="btn-submit-label">Enrich &amp; Download Excel &darr;</span>
         </button>
 
-        <!-- Collapsible Advanced Settings -->
+        <!-- Collapsible Advanced Settings (No manual region required!) -->
         <details class="advanced">
           <summary>Advanced settings</summary>
           <div class="advanced-body">
@@ -1627,11 +1757,6 @@ HTML_PAGE = """<!DOCTYPE html>
                 <label><input type="radio" name="platform" value="ios"> iOS Only</label>
                 <label><input type="radio" name="platform" value="android"> Android Only</label>
               </div>
-            </div>
-            <div class="form-group">
-              <label>Storefront Countries (priority order)</label>
-              <input type="text" name="countries" value="in,tw,us,gb">
-              <div class="input-hint">Priority order for regional and country-locked apps.</div>
             </div>
             <div class="form-group">
               <label>ID Column Header (optional)</label>
@@ -1660,8 +1785,9 @@ HTML_PAGE = """<!DOCTYPE html>
         <!-- Sample Chips -->
         <div class="sample-row">
           <span>Try:</span>
-          <button type="button" class="sample-chip" onclick="addSample('com.whatsapp')">+ WhatsApp (Android)</button>
-          <button type="button" class="sample-chip" onclick="addSample('310633997')">+ WhatsApp (iOS)</button>
+          <button type="button" class="sample-chip" onclick="addSample('com.grofers.customerapp')">+ Blinkit (Android)</button>
+          <button type="button" class="sample-chip" onclick="addSample('960335206')">+ Blinkit (iOS)</button>
+          <button type="button" class="sample-chip" onclick="addSample('com.whatsapp')">+ WhatsApp</button>
           <button type="button" class="sample-chip" onclick="addSample('org.mozilla.firefox')">+ Firefox</button>
           <button type="button" class="sample-chip" onclick="addSample('com.spotify.music')">+ Spotify</button>
         </div>
@@ -1676,7 +1802,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <!-- Mode B: By Name / Keyword -->
       <div id="search-box-name" style="display: none;">
         <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-          <input type="text" id="name-search-input" placeholder="Type app name (e.g. Notion, Duolingo, Subway Surfers)..." onkeydown="if(event.key==='Enter') runKeywordSearch()">
+          <input type="text" id="name-search-input" placeholder="Type app name (e.g. Blinkit, Notion, Duolingo)..." onkeydown="if(event.key==='Enter') runKeywordSearch()">
           <button type="button" class="btn-main" style="width: auto; padding: 0 16px;" onclick="runKeywordSearch()">Search</button>
         </div>
         <div class="keyword-results" id="keyword-results"></div>
@@ -1693,10 +1819,6 @@ HTML_PAGE = """<!DOCTYPE html>
               <label><input type="radio" name="quick_platform" value="ios"> iOS Only</label>
               <label><input type="radio" name="quick_platform" value="android"> Android Only</label>
             </div>
-          </div>
-          <div class="form-group">
-            <label>Storefront Countries</label>
-            <input type="text" id="quick-countries" value="in,tw,us,gb">
           </div>
           <label class="checkbox-row">
             <input type="checkbox" id="quick-fallback" checked>
@@ -1722,6 +1844,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <thead>
               <tr>
                 <th>App</th>
+                <th>Region</th>
                 <th>Status</th>
                 <th>Rating</th>
                 <th>Price</th>
@@ -1754,6 +1877,7 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="drawer-pills">
+    <span class="drawer-pill drawer-pill-region" id="dpill-region">Region: Global</span>
     <span class="drawer-pill" id="dpill-plat">iOS</span>
     <span class="drawer-pill" id="dpill-price">Free</span>
     <span class="drawer-pill" id="dpill-rating">4.8 ★</span>
@@ -1769,6 +1893,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <div class="drawer-actions">
     <a id="drawer-store-btn" href="#" target="_blank" class="btn-main" style="text-decoration:none;">Open in Store &nearr;</a>
+    <a id="drawer-deeplink-btn" href="#" class="btn-ghost" style="text-decoration:none; justify-content:center;">Open in Native App &nearr;</a>
     <button type="button" class="btn-ghost" onclick="copyDrawerId()">Copy App ID / Package</button>
     <button type="button" class="btn-ghost" onclick="copyDrawerUrl()">Copy Store URL</button>
   </div>
@@ -1777,6 +1902,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <script>
   let lastResults = [];
   let currentDrawerApp = null;
+  let progressTimer = null;
 
   function setMode(mode) {
     document.getElementById('pane-file').classList.toggle('active', mode === 'file');
@@ -1808,17 +1934,90 @@ HTML_PAGE = """<!DOCTYPE html>
     input.value = '';
     document.getElementById('file-pill').style.display = 'none';
     document.getElementById('dropzone').style.display = 'block';
+    hideProgress();
   }
 
-  function handleFormSubmit(e) {
+  // Live Loading Animation for File Download
+  async function handleFormSubmit(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('file-input');
+    if (!fileInput.files || !fileInput.files[0]) {
+      alert("Please select an Excel or CSV file first.");
+      return;
+    }
+
+    const file = fileInput.files[0];
+    const form = document.getElementById('excel-form');
+    const formData = new FormData(form);
+
     const btn = document.getElementById('btn-submit-file');
-    const label = document.getElementById('btn-submit-label');
-    btn.disabled = true;
-    label.innerHTML = '<span class="spinner"></span> Processing &amp; Downloading...';
-    setTimeout(() => {
-      btn.disabled = false;
-      label.innerHTML = 'Enrich &amp; Download Excel &darr;';
-    }, 6000);
+    btn.style.display = 'none';
+    showProgress();
+
+    // Stage progression
+    updateProgress(20, 'Uploading spreadsheet...');
+    progressTimer = setTimeout(() => {
+      updateProgress(50, 'Querying Apple & Google stores...');
+      progressTimer = setTimeout(() => {
+        updateProgress(80, 'Generating enriched Excel spreadsheet...');
+      }, 2500);
+    }, 1200);
+
+    try {
+      const resp = await fetch('/lookup/excel', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error(err || 'Failed to enrich spreadsheet');
+      }
+
+      clearTimeout(progressTimer);
+      updateProgress(100, '✓ Download ready!');
+
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const baseName = file.name.replace(/\\.[^/.]+$/, "");
+      a.download = `${baseName}_resolved.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      setTimeout(() => {
+        hideProgress();
+        btn.style.display = 'inline-flex';
+      }, 2000);
+
+    } catch (err) {
+      clearTimeout(progressTimer);
+      alert("Error: " + err.message);
+      hideProgress();
+      btn.style.display = 'inline-flex';
+    }
+  }
+
+  function showProgress() {
+    const box = document.getElementById('progress-box');
+    box.style.display = 'block';
+    updateProgress(10, 'Initializing...');
+  }
+
+  function hideProgress() {
+    document.getElementById('progress-box').style.display = 'none';
+  }
+
+  function updateProgress(pct, statusText) {
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('progress-pct').textContent = pct + '%';
+    document.getElementById('progress-status-text').innerHTML = 
+      pct === 100 
+      ? statusText 
+      : `<span class="spinner spinner-dark"></span> ${statusText}`;
   }
 
   // Search Handling
@@ -1835,6 +2034,37 @@ HTML_PAGE = """<!DOCTYPE html>
     lastResults = [];
   }
 
+  // Live Shimmer Loader for Instant Fetching
+  function showSearchShimmer() {
+    const card = document.getElementById('results-card');
+    const tbody = document.getElementById('results-tbody');
+    const summary = document.getElementById('results-summary');
+
+    summary.innerHTML = `<span class="spinner spinner-dark"></span> Fetching real-time store metadata across regions...`;
+
+    tbody.innerHTML = `
+      <tr>
+        <td><div class="tbl-app-cell"><span class="shimmer-cell tbl-icon"></span><div><span class="shimmer-cell" style="width:120px;height:14px;"></span><div style="margin-top:4px;"><span class="shimmer-cell" style="width:80px;height:11px;"></span></div></div></div></td>
+        <td><span class="shimmer-cell" style="width:75px;height:18px;border-radius:4px;"></span></td>
+        <td><span class="shimmer-cell" style="width:55px;height:18px;border-radius:4px;"></span></td>
+        <td><span class="shimmer-cell" style="width:45px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:40px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:90px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:50px;height:14px;"></span></td>
+      </tr>
+      <tr>
+        <td><div class="tbl-app-cell"><span class="shimmer-cell tbl-icon"></span><div><span class="shimmer-cell" style="width:140px;height:14px;"></span><div style="margin-top:4px;"><span class="shimmer-cell" style="width:90px;height:11px;"></span></div></div></div></td>
+        <td><span class="shimmer-cell" style="width:85px;height:18px;border-radius:4px;"></span></td>
+        <td><span class="shimmer-cell" style="width:55px;height:18px;border-radius:4px;"></span></td>
+        <td><span class="shimmer-cell" style="width:45px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:40px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:80px;height:14px;"></span></td>
+        <td><span class="shimmer-cell" style="width:50px;height:14px;"></span></td>
+      </tr>
+    `;
+    card.style.display = 'block';
+  }
+
   async function runSearch() {
     const raw = document.getElementById('quick-input').value.trim();
     if (!raw) {
@@ -1843,13 +2073,14 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     const lines = raw.split('\\n').map(s => s.trim()).filter(Boolean);
     const platform = document.querySelector('input[name="quick_platform"]:checked').value;
-    const countries = document.getElementById('quick-countries').value.trim() || 'in,tw,us,gb';
     const fallback = document.getElementById('quick-fallback').checked;
 
     const btn = document.getElementById('btn-quick-run');
     const label = document.getElementById('quick-label');
     btn.disabled = true;
-    label.innerHTML = '<span class="spinner"></span> Looking up...';
+    label.innerHTML = '<span class="spinner"></span> Fetching...';
+
+    showSearchShimmer();
 
     try {
       const resp = await fetch('/lookup/quick', {
@@ -1858,7 +2089,7 @@ HTML_PAGE = """<!DOCTYPE html>
         body: JSON.stringify({
           inputs: lines,
           platform: platform,
-          countries: countries,
+          countries: 'in,us,tw,gb',
           scrape_fallback: fallback
         })
       });
@@ -1870,6 +2101,7 @@ HTML_PAGE = """<!DOCTYPE html>
       renderTable(data);
     } catch (err) {
       alert('Error fetching metadata: ' + err.message);
+      document.getElementById('results-card').style.display = 'none';
     } finally {
       btn.disabled = false;
       label.textContent = 'Look Up Apps';
@@ -1890,7 +2122,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     tbody.innerHTML = '';
 
-    (data.results || []).forEach((r, idx) => {
+    (data.results || []).forEach(r => {
       const tr = document.createElement('tr');
       tr.className = 'clickable-row';
       tr.onclick = () => openDrawer(r);
@@ -1915,6 +2147,7 @@ HTML_PAGE = """<!DOCTYPE html>
             </div>
           </div>
         </td>
+        <td><span class="badge-region">${esc(r.region || 'Global')}</span></td>
         <td><span class="badge-status ${statusCls}">${statusIcon} ${esc(r.status || 'Live')}</span></td>
         <td>${ratingTxt}</td>
         <td>${esc(r.price || 'Free')}</td>
@@ -1933,7 +2166,7 @@ HTML_PAGE = """<!DOCTYPE html>
     if (!q) return;
 
     const resBox = document.getElementById('keyword-results');
-    resBox.innerHTML = '<div style="font-size:12.5px;color:#6b7280;padding:8px 0;"><span class="spinner" style="border-top-color:#111827;"></span> Searching store catalogs...</div>';
+    resBox.innerHTML = '<div style="font-size:12.5px;color:#6b7280;padding:8px 0;"><span class="spinner spinner-dark"></span> Searching global stores...</div>';
     resBox.style.display = 'grid';
 
     try {
@@ -1981,6 +2214,7 @@ HTML_PAGE = """<!DOCTYPE html>
     document.getElementById('drawer-dev').textContent = app.developer || 'Unknown Publisher';
     document.getElementById('drawer-icon').src = app.icon_url || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>';
 
+    document.getElementById('dpill-region').textContent = 'Region: ' + (app.region || 'Global');
     document.getElementById('dpill-plat').textContent = app.platform;
     document.getElementById('dpill-price').textContent = app.price || 'Free';
     document.getElementById('dpill-rating').textContent = app.rating ? `${app.rating} ★ (${formatCount(app.reviews_count)})` : 'No ratings';
@@ -1991,18 +2225,20 @@ HTML_PAGE = """<!DOCTYPE html>
     const osPill = document.getElementById('dpill-os');
     if (app.min_os) { osPill.textContent = app.min_os; osPill.style.display = 'inline-block'; } else { osPill.style.display = 'none'; }
 
-    // Developer explore link
     const devExplore = document.getElementById('drawer-dev-explore');
-    if (app.developer_id || app.developer) {
-      devExplore.style.display = 'inline';
-    } else {
-      devExplore.style.display = 'none';
-    }
+    devExplore.style.display = (app.developer_id || app.developer) ? 'inline' : 'none';
 
-    // QR Code
     const storeUrl = app.store_url || `https://apps.apple.com/app/id${app.app_id}`;
     document.getElementById('drawer-qr').src = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=4&data=${encodeURIComponent(storeUrl)}`;
     document.getElementById('drawer-store-btn').href = storeUrl;
+
+    const deepBtn = document.getElementById('drawer-deeplink-btn');
+    if (app.deep_link) {
+      deepBtn.href = app.deep_link;
+      deepBtn.style.display = 'inline-flex';
+    } else {
+      deepBtn.style.display = 'none';
+    }
 
     document.getElementById('drawer').classList.add('open');
     document.getElementById('drawer-overlay').classList.add('open');
@@ -2045,12 +2281,12 @@ HTML_PAGE = """<!DOCTYPE html>
     }
   }
 
-  // Multi-Format Export Actions
   function copyForGoogleSheets() {
     if (!lastResults.length) return;
-    const headers = ['Platform', 'Status', 'App Name', 'ID / Package', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
+    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID / Package', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
     const rows = lastResults.map(r => [
       r.platform || '',
+      r.region || 'Global',
       r.status || '',
       r.app_name || '',
       r.app_id || r.input || '',
@@ -2069,9 +2305,10 @@ HTML_PAGE = """<!DOCTYPE html>
 
   function downloadCsv() {
     if (!lastResults.length) return;
-    const headers = ['Platform', 'Status', 'App Name', 'ID', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
+    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
     const rows = lastResults.map(r => [
       `"${r.platform || ''}"`,
+      `"${r.region || 'Global'}"`,
       `"${r.status || ''}"`,
       `"${(r.app_name || '').replace(/"/g, '""')}"`,
       `"${r.app_id || r.input || ''}"`,
