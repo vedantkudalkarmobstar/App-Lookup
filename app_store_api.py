@@ -27,6 +27,7 @@ COUNTRY_NAMES = {
     "IN": "India (IN)",
     "US": "United States (US)",
     "GB": "United Kingdom (GB)",
+    "UK": "United Kingdom (GB)",
     "TW": "Taiwan (TW)",
     "JP": "Japan (JP)",
     "DE": "Germany (DE)",
@@ -34,6 +35,101 @@ COUNTRY_NAMES = {
     "AU": "Australia (AU)",
     "FR": "France (FR)",
     "SG": "Singapore (SG)",
+    "SE": "Sweden (SE)",
+    "KR": "South Korea (KR)",
+    "CN": "China (CN)",
+    "IE": "Ireland (IE)",
+    "NL": "Netherlands (NL)",
+    "IL": "Israel (IL)",
+    "CH": "Switzerland (CH)",
+    "AE": "United Arab Emirates (AE)",
+    "BR": "Brazil (BR)",
+    "ID": "Indonesia (ID)",
+    "IT": "Italy (IT)",
+    "ES": "Spain (ES)",
+}
+
+COUNTRY_KEYWORDS = {
+    "india": "India (IN)",
+    "united states": "United States (US)",
+    "usa": "United States (US)",
+    "u.s.a": "United States (US)",
+    "united kingdom": "United Kingdom (GB)",
+    "england": "United Kingdom (GB)",
+    "great britain": "United Kingdom (GB)",
+    "japan": "Japan (JP)",
+    "taiwan": "Taiwan (TW)",
+    "germany": "Germany (DE)",
+    "deutschland": "Germany (DE)",
+    "france": "France (FR)",
+    "sweden": "Sweden (SE)",
+    "singapore": "Singapore (SG)",
+    "south korea": "South Korea (KR)",
+    "korea": "South Korea (KR)",
+    "australia": "Australia (AU)",
+    "canada": "Canada (CA)",
+    "china": "China (CN)",
+    "ireland": "Ireland (IE)",
+    "netherlands": "Netherlands (NL)",
+    "israel": "Israel (IL)",
+    "switzerland": "Switzerland (CH)",
+    "united arab emirates": "United Arab Emirates (AE)",
+    "uae": "United Arab Emirates (AE)",
+    "dubai": "United Arab Emirates (AE)",
+    "brazil": "Brazil (BR)",
+    "brasil": "Brazil (BR)",
+    "indonesia": "Indonesia (ID)",
+    "italy": "Italy (IT)",
+    "italia": "Italy (IT)",
+    "spain": "Spain (ES)",
+    "espana": "Spain (ES)",
+}
+
+PHONE_PREFIXES = {
+    "+91": "India (IN)",
+    "+1": "United States (US)",
+    "+44": "United Kingdom (GB)",
+    "+81": "Japan (JP)",
+    "+886": "Taiwan (TW)",
+    "+49": "Germany (DE)",
+    "+33": "France (FR)",
+    "+46": "Sweden (SE)",
+    "+65": "Singapore (SG)",
+    "+82": "South Korea (KR)",
+    "+61": "Australia (AU)",
+    "+353": "Ireland (IE)",
+    "+31": "Netherlands (NL)",
+    "+971": "United Arab Emirates (AE)",
+    "+41": "Switzerland (CH)",
+    "+55": "Brazil (BR)",
+    "+62": "Indonesia (ID)",
+    "+39": "Italy (IT)",
+    "+34": "Spain (ES)",
+}
+
+CCTLDS = {
+    "in": "India (IN)",
+    "us": "United States (US)",
+    "uk": "United Kingdom (GB)",
+    "gb": "United Kingdom (GB)",
+    "jp": "Japan (JP)",
+    "tw": "Taiwan (TW)",
+    "de": "Germany (DE)",
+    "fr": "France (FR)",
+    "se": "Sweden (SE)",
+    "sg": "Singapore (SG)",
+    "kr": "South Korea (KR)",
+    "au": "Australia (AU)",
+    "ca": "Canada (CA)",
+    "cn": "China (CN)",
+    "ie": "Ireland (IE)",
+    "nl": "Netherlands (NL)",
+    "ch": "Switzerland (CH)",
+    "ae": "United Arab Emirates (AE)",
+    "br": "Brazil (BR)",
+    "id": "Indonesia (ID)",
+    "it": "Italy (IT)",
+    "es": "Spain (ES)",
 }
 
 
@@ -41,6 +137,118 @@ def format_region(code: str) -> str:
     """Format 2-letter ISO country code into readable region name."""
     c = (code or "").upper().strip()
     return COUNTRY_NAMES.get(c, c if c else "Global")
+
+
+def extract_play_origin(html_text: str) -> Tuple[str, Optional[str], Optional[str]]:
+    """
+    Extracts developer registered legal address, phone number, and true origin region
+    directly from Google Play Store page HTML payload (AF_initDataCallback).
+    Returns (origin_region, address, phone).
+    """
+    address = None
+    phone = None
+    region = None
+
+    addr_match = re.search(
+        r'\[\"([^\"]*?(?:India|United States|USA|United Kingdom|England|Japan|Taiwan|Germany|Deutschland|France|Sweden|Singapore|Korea|Australia|Canada|Ireland|Netherlands|Israel|Switzerland|Brazil|Indonesia|Italy|Spain)[^\"]*?)\"\]',
+        html_text,
+        re.I,
+    )
+    if addr_match:
+        try:
+            raw_addr = addr_match.group(1).encode("utf-8").decode("unicode_escape", errors="ignore")
+            address = raw_addr.replace("\\n", ", ").strip()
+            lines = [l.strip().lower() for l in raw_addr.replace("\\n", "\n").split("\n") if l.strip()]
+            for l in reversed(lines):
+                for c_name, c_res in COUNTRY_KEYWORDS.items():
+                    if c_name in l:
+                        region = c_res
+                        break
+                if region:
+                    break
+        except Exception:
+            pass
+
+    phone_match = re.search(r'\"(\+\d{1,4}\s*[\d\s\-]{6,15})\"', html_text)
+    if phone_match:
+        phone = phone_match.group(1).strip()
+        if not region:
+            for pfx, c_res in sorted(PHONE_PREFIXES.items(), key=lambda x: -len(x[0])):
+                if phone.startswith(pfx):
+                    region = c_res
+                    break
+
+    return (region or "Global", address, phone)
+
+
+def extract_ios_origin(item: dict) -> str:
+    """
+    Extracts true origin region from Apple iTunes API item metadata:
+    Corporate legal suffix in sellerName, developer website ccTLD,
+    linguistic localization uniqueness, and currency.
+    """
+    seller = item.get("sellerName", "") or item.get("artistName", "") or ""
+    url = item.get("sellerUrl", "") or ""
+    langs = item.get("languageCodesISO2A", []) or []
+    currency = (item.get("currency") or "").upper()
+    track_name = item.get("trackName", "") or ""
+
+    # 1. Corporate entity keywords in sellerName
+    if re.search(r"\b(Pvt\.?\s*Ltd\.?|Private\s+Limited)\b", seller, re.I):
+        return "India (IN)"
+    if "LY Corporation" in seller:
+        return "Japan (JP)"
+    if re.search(r"\b(Inc\.?|LLC|Corporation|Corp\.?)\b", seller, re.I):
+        return "United States (US)"
+    if re.search(r"\b(GmbH|AG)\b", seller, re.I):
+        return "Germany (DE)"
+    if re.search(r"\b(Ltd\.?|PLC)\b", seller, re.I):
+        return "United Kingdom (GB)"
+    if re.search(r"\b(K\.?K\.?|Kabushiki\s+Kaisha)\b", seller, re.I):
+        return "Japan (JP)"
+    if re.search(r"\b(Pty\s+Ltd)\b", seller, re.I):
+        return "Australia (AU)"
+    if re.search(r"\b(SAS|SARL)\b", seller, re.I):
+        return "France (FR)"
+    if re.search(r"\b(S\.?p\.?A\.?)\b", seller, re.I):
+        return "Italy (IT)"
+    if re.search(r"\b(B\.?V\.?)\b", seller, re.I):
+        return "Netherlands (NL)"
+
+    # 2. ccTLD from developer sellerUrl
+    tld_match = re.search(r"https?://[^/]+\.([a-z]{2,3})(?:/|$)", url, re.I)
+    if tld_match:
+        tld = tld_match.group(1).lower()
+        if tld in CCTLDS:
+            return CCTLDS[tld]
+
+    # 3. Unique linguistic indicators (e.g. Indic scripts, CJK)
+    indic = {"AS", "BN", "GU", "HI", "KN", "ML", "MR", "OR", "PA", "TA", "TE"}
+    indic_count = sum(1 for l in langs if l in indic)
+    if indic_count >= 2 or (indic_count == 1 and len(langs) <= 4):
+        return "India (IN)"
+    if "BHIM" in track_name.upper() or "UPI" in track_name.upper():
+        return "India (IN)"
+    if len(langs) == 1 and langs[0] == "JA":
+        return "Japan (JP)"
+    if len(langs) <= 2 and "ZH-HANT" in langs:
+        return "Taiwan (TW)"
+    if len(langs) <= 2 and "KO" in langs:
+        return "South Korea (KR)"
+
+    # 4. Currency indicator if non-USD
+    if currency == "INR":
+        return "India (IN)"
+    if currency == "JPY":
+        return "Japan (JP)"
+    if currency == "TWD":
+        return "Taiwan (TW)"
+    if currency == "GBP":
+        return "United Kingdom (GB)"
+    if currency == "EUR":
+        return "Europe (EU)"
+
+    return "Global"
 
 
 def parse_countries(countries: Union[str, List[str], None]) -> List[str]:
@@ -178,16 +386,18 @@ def clean_android_title(title: str) -> str:
 
 
 async def lookup_itunes_batch(
-    client: httpx.AsyncClient, app_ids: List[str], country: str
+    client: httpx.AsyncClient, app_ids: List[str], country: Optional[str] = None
 ) -> Dict[str, dict]:
-    """Query Apple iTunes Lookup API in batches of 100 with rich metadata."""
+    """Query Apple iTunes Lookup API in batches of 100 with rich metadata and direct origin extraction."""
     found: Dict[str, dict] = {}
     batch_size = 100
 
     for i in range(0, len(app_ids), batch_size):
         batch = app_ids[i : i + batch_size]
         url = "https://itunes.apple.com/lookup"
-        params = {"id": ",".join(batch), "country": country.lower()}
+        params = {"id": ",".join(batch)}
+        if country:
+            params["country"] = country.lower()
 
         for attempt in range(3):
             try:
@@ -201,11 +411,14 @@ async def lookup_itunes_batch(
                         app_id = str(item.get("trackId", ""))
                         if app_id:
                             rating = item.get("averageUserRating")
+                            detected_origin = extract_ios_origin(item)
+                            if detected_origin == "Global" and country:
+                                detected_origin = format_region(country)
                             found[app_id] = {
                                 "platform": "iOS",
                                 "app_name": item.get("trackName", ""),
                                 "bundle_id": item.get("bundleId", ""),
-                                "developer": item.get("artistName", ""),
+                                "developer": item.get("artistName", "") or item.get("sellerName", ""),
                                 "developer_id": str(item.get("artistId", "")),
                                 "category": item.get("primaryGenreName", ""),
                                 "icon_url": item.get("artworkUrl512") or item.get("artworkUrl100") or "",
@@ -217,8 +430,8 @@ async def lookup_itunes_batch(
                                 "min_os": f"iOS {item.get('minimumOsVersion')}+" if item.get("minimumOsVersion") else "",
                                 "store_url": item.get("trackViewUrl", ""),
                                 "deep_link": f"itms-apps://itunes.apple.com/app/id{app_id}",
-                                "storefront": country.upper(),
-                                "region": format_region(country),
+                                "storefront": country.upper() if country else "GLOBAL",
+                                "region": detected_origin,
                                 "source": "itunes_api",
                                 "status": "Live",
                             }
@@ -297,6 +510,11 @@ async def scrape_app_store_page(
             if not app_name or app_name.lower() in {"app store", "connecting to the app store"}:
                 return None
 
+            mock_item = {"sellerName": developer, "artistName": developer, "trackName": app_name}
+            detected_origin = extract_ios_origin(mock_item)
+            if detected_origin == "Global":
+                detected_origin = format_region(country)
+
             return {
                 "platform": "iOS",
                 "app_name": app_name,
@@ -314,7 +532,7 @@ async def scrape_app_store_page(
                 "store_url": str(resp.url),
                 "deep_link": f"itms-apps://itunes.apple.com/app/id{app_id}",
                 "storefront": country.upper(),
-                "region": format_region(country),
+                "region": detected_origin,
                 "source": "app_store_page",
                 "status": "Live",
             }
@@ -327,35 +545,44 @@ async def scrape_app_store_page(
 async def resolve_ios_ids(
     raw_ids: List[str], countries: Optional[List[str]] = None, scrape_fallback: bool = True
 ) -> Dict[str, dict]:
-    """Resolve iOS App Store IDs automatically across storefronts."""
+    """Resolve iOS App Store IDs globally first, extracting origin from API metadata, with regional fallbacks."""
     unique_ids = list(dict.fromkeys([i for i in raw_ids if i]))
     results: Dict[str, dict] = {}
     clean_countries = [c.strip().lower() for c in (countries or DEFAULT_COUNTRIES) if c.strip()]
 
     async with httpx.AsyncClient() as client:
-        for idx, country in enumerate(clean_countries):
-            missing = [aid for aid in unique_ids if aid not in results]
-            if not missing:
-                break
-            batch_hits = await lookup_itunes_batch(client, missing, country)
-            for k, v in batch_hits.items():
-                if idx > 0 and v.get("status") == "Live":
-                    v["status"] = "Region-Restricted"
-            results.update(batch_hits)
+        # Phase 1: Global iTunes query (fastest, no artificial regional bias)
+        global_hits = await lookup_itunes_batch(client, unique_ids, country=None)
+        results.update(global_hits)
 
+        # Phase 2: For any missing IDs (e.g. region-locked apps), query regional storefronts
+        missing = [aid for aid in unique_ids if aid not in results]
+        if missing:
+            for country in clean_countries:
+                still_missing = [aid for aid in missing if aid not in results]
+                if not still_missing:
+                    break
+                regional_hits = await lookup_itunes_batch(client, still_missing, country=country)
+                for k, v in regional_hits.items():
+                    v["status"] = "Region-Restricted"
+                results.update(regional_hits)
+
+        # Phase 3: Web scraping fallback for anything still unindexed by iTunes lookup API
         if scrape_fallback:
             sem = asyncio.Semaphore(5)
-            for idx, country in enumerate(clean_countries):
-                missing = [aid for aid in unique_ids if aid not in results]
-                if not missing:
-                    break
-                tasks = [scrape_app_store_page(client, sem, aid, country) for aid in missing]
-                scraped = await asyncio.gather(*tasks)
-                for aid, info in zip(missing, scraped):
-                    if info:
-                        if idx > 0 and info.get("status") == "Live":
-                            info["status"] = "Region-Restricted"
-                        results[aid] = info
+            still_missing = [aid for aid in unique_ids if aid not in results]
+            if still_missing:
+                for country in ["us"] + [c for c in clean_countries if c != "us"]:
+                    unresolved = [aid for aid in still_missing if aid not in results]
+                    if not unresolved:
+                        break
+                    tasks = [scrape_app_store_page(client, sem, aid, country) for aid in unresolved]
+                    scraped = await asyncio.gather(*tasks)
+                    for aid, info in zip(unresolved, scraped):
+                        if info:
+                            if country != "us":
+                                info["status"] = "Region-Restricted"
+                            results[aid] = info
 
     return results
 
@@ -369,11 +596,13 @@ async def scrape_google_play_page(
     client: httpx.AsyncClient,
     sem: asyncio.Semaphore,
     package_name: str,
-    country: str,
+    country: Optional[str] = None,
 ) -> Optional[dict]:
-    """Fetch Google Play Store page and extract rich app metadata."""
+    """Fetch Google Play Store page and extract rich app metadata and true developer origin."""
     url = "https://play.google.com/store/apps/details"
-    params = {"id": package_name, "gl": country.lower(), "hl": "en"}
+    params = {"id": package_name, "hl": "en"}
+    if country:
+        params["gl"] = country.lower()
 
     async with sem:
         try:
@@ -442,12 +671,18 @@ async def scrape_google_play_page(
             if not app_name or app_name.lower() in {"google play", "apps on google play"}:
                 return None
 
+            origin_region, dev_address, dev_phone = extract_play_origin(resp.text)
+            if origin_region == "Global" and country:
+                origin_region = format_region(country)
+
             return {
                 "platform": "Android",
                 "app_name": app_name,
                 "bundle_id": package_name,
                 "developer": developer,
                 "developer_id": developer_id,
+                "developer_address": dev_address or "",
+                "developer_phone": dev_phone or "",
                 "category": category,
                 "icon_url": icon_url,
                 "rating": rating,
@@ -458,8 +693,8 @@ async def scrape_google_play_page(
                 "min_os": "Android",
                 "store_url": f"https://play.google.com/store/apps/details?id={package_name}",
                 "deep_link": f"market://details?id={package_name}",
-                "storefront": country.upper(),
-                "region": format_region(country),
+                "storefront": country.upper() if country else "GLOBAL",
+                "region": origin_region,
                 "source": "google_play_store",
                 "status": "Live",
             }
@@ -472,24 +707,33 @@ async def scrape_google_play_page(
 async def resolve_android_packages(
     packages: List[str], countries: Optional[List[str]] = None
 ) -> Dict[str, dict]:
-    """Resolve Android package names across specified storefront countries."""
+    """Resolve Android packages globally first, extracting true origin from publisher registered address."""
     unique_pkgs = list(dict.fromkeys([p for p in packages if p]))
     results: Dict[str, dict] = {}
     clean_countries = [c.strip().lower() for c in (countries or DEFAULT_COUNTRIES) if c.strip()]
 
     async with httpx.AsyncClient() as client:
         sem = asyncio.Semaphore(5)
-        for idx, country in enumerate(clean_countries):
-            missing = [pkg for pkg in unique_pkgs if pkg not in results]
-            if not missing:
-                break
-            tasks = [scrape_google_play_page(client, sem, pkg, country) for pkg in missing]
-            scraped = await asyncio.gather(*tasks)
-            for pkg, info in zip(missing, scraped):
-                if info:
-                    if idx > 0 and info.get("status") == "Live":
+        # Phase 1: Global query without gl restrictions
+        tasks = [scrape_google_play_page(client, sem, pkg, country=None) for pkg in unique_pkgs]
+        scraped = await asyncio.gather(*tasks)
+        for pkg, info in zip(unique_pkgs, scraped):
+            if info:
+                results[pkg] = info
+
+        # Phase 2: For any packages returning 404 globally, try regional fallbacks
+        missing = [pkg for pkg in unique_pkgs if pkg not in results]
+        if missing:
+            for country in clean_countries:
+                unresolved = [pkg for pkg in missing if pkg not in results]
+                if not unresolved:
+                    break
+                tasks = [scrape_google_play_page(client, sem, pkg, country=country) for pkg in unresolved]
+                scraped = await asyncio.gather(*tasks)
+                for pkg, info in zip(unresolved, scraped):
+                    if info:
                         info["status"] = "Region-Restricted"
-                    results[pkg] = info
+                        results[pkg] = info
 
     return results
 
@@ -708,6 +952,8 @@ async def resolve_mixed_batch(
                 "bundle_id": info.get("bundle_id", "") or aid,
                 "developer": info.get("developer", ""),
                 "developer_id": info.get("developer_id", ""),
+                "developer_address": info.get("developer_address", ""),
+                "developer_phone": info.get("developer_phone", ""),
                 "category": info.get("category", ""),
                 "icon_url": info.get("icon_url", ""),
                 "rating": info.get("rating"),
@@ -942,6 +1188,7 @@ async def lookup_excel(
     df["Extracted_ID"] = [r["app_id"] for r in resolved_list]
     df["App_Name"] = [r["app_name"] for r in resolved_list]
     df["Developer"] = [r["developer"] for r in resolved_list]
+    df["Developer_Address"] = [r.get("developer_address", "") for r in resolved_list]
     df["Category"] = [r["category"] for r in resolved_list]
     df["Rating"] = [r.get("rating") for r in resolved_list]
     df["Reviews_Count"] = [r.get("reviews_count") for r in resolved_list]
@@ -1875,6 +2122,9 @@ HTML_PAGE = """<!DOCTYPE html>
     by <span id="drawer-dev">-</span>
     <span id="drawer-dev-explore" style="display:none;"> &bull; <a class="drawer-dev-link" onclick="exploreDevApps()">More apps by publisher &rarr;</a></span>
   </div>
+  <div id="drawer-dev-addr-box" style="display:none; font-size:11.5px; color:var(--text-muted); background:var(--bg-subtle); padding:6px 10px; border-radius:6px; margin-bottom:12px; border:1px solid var(--border); line-height:1.4;">
+    📍 <span id="drawer-dev-addr"></span>
+  </div>
 
   <div class="drawer-pills">
     <span class="drawer-pill drawer-pill-region" id="dpill-region">Region: Global</span>
@@ -2214,6 +2464,14 @@ HTML_PAGE = """<!DOCTYPE html>
     document.getElementById('drawer-dev').textContent = app.developer || 'Unknown Publisher';
     document.getElementById('drawer-icon').src = app.icon_url || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>';
 
+    const addrBox = document.getElementById('drawer-dev-addr-box');
+    if (app.developer_address) {
+      document.getElementById('drawer-dev-addr').textContent = app.developer_address;
+      addrBox.style.display = 'block';
+    } else {
+      addrBox.style.display = 'none';
+    }
+
     document.getElementById('dpill-region').textContent = 'Region: ' + (app.region || 'Global');
     document.getElementById('dpill-plat').textContent = app.platform;
     document.getElementById('dpill-price').textContent = app.price || 'Free';
@@ -2283,7 +2541,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   function copyForGoogleSheets() {
     if (!lastResults.length) return;
-    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID / Package', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
+    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID / Package', 'Developer', 'Developer Address', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
     const rows = lastResults.map(r => [
       r.platform || '',
       r.region || 'Global',
@@ -2291,6 +2549,7 @@ HTML_PAGE = """<!DOCTYPE html>
       r.app_name || '',
       r.app_id || r.input || '',
       r.developer || '',
+      r.developer_address || '',
       r.category || '',
       r.rating || '',
       r.reviews_count || '',
@@ -2305,7 +2564,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   function downloadCsv() {
     if (!lastResults.length) return;
-    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID', 'Developer', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
+    const headers = ['Platform', 'Region', 'Status', 'App Name', 'ID', 'Developer', 'Developer Address', 'Category', 'Rating', 'Reviews', 'Price', 'Store URL'];
     const rows = lastResults.map(r => [
       `"${r.platform || ''}"`,
       `"${r.region || 'Global'}"`,
@@ -2313,6 +2572,7 @@ HTML_PAGE = """<!DOCTYPE html>
       `"${(r.app_name || '').replace(/"/g, '""')}"`,
       `"${r.app_id || r.input || ''}"`,
       `"${(r.developer || '').replace(/"/g, '""')}"`,
+      `"${(r.developer_address || '').replace(/"/g, '""')}"`,
       `"${r.category || ''}"`,
       `"${r.rating || ''}"`,
       `"${r.reviews_count || ''}"`,
